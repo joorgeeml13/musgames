@@ -1,0 +1,91 @@
+name: CI / Pull Request Validation
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-test:
+    name: Backend Tests & Quality (Quarkus 3.x / Java 21)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run Backend Integration & Unit Tests
+        working-directory: backend
+        run: mvn clean test
+
+  frontend-test:
+    name: Frontend Linter, Tests & Build (React 19 / TypeScript)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run Oxlint (Linter)
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Run Vitest Unit Tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Build Frontend Application
+        working-directory: frontend
+        run: npm run build
+
+  infra-validate:
+    name: Infrastructure & Docker Compose Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Dev Compose Configuration
+        run: docker compose -f docker/dev/compose.yaml config
+
+      - name: Validate Prod Compose Configuration
+        run: |
+          POSTGRES_PASSWORD=ci_test_password \
+          JWT_SECRET=ci_test_jwt_secret_key_minimum_256_bits_for_validation \
+          docker compose -f docker/prod/compose.yaml config
+
+  ci-gate:
+    name: Mandatory CI Quality Gate
+    needs: [backend-test, frontend-test, infra-validate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Certification Check
+        run: echo "All backend integration tests, frontend builds and infrastructure checks passed successfully!"

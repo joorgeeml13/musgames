@@ -1,0 +1,76 @@
+name: mus-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mus-postgres-prod
+    restart: always
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mus_db}
+      POSTGRES_USER: ${POSTGRES_USER:-mus_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD environment variable must be set in production}
+    # Security: Database port is not published to host in production; accessible only via internal mus-network
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mus_user} -d ${POSTGRES_DB:-mus_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - mus-network
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: docker/prod/backend.Dockerfile
+    container_name: mus-backend-prod
+    restart: always
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      QUARKUS_HTTP_HOST: 0.0.0.0
+      QUARKUS_DATASOURCE_DB_KIND: postgresql
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-mus_db}
+      QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER:-mus_user}
+      QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD environment variable must be set in production}
+      QUARKUS_HIBERNATE_ORM_DATABASE_GENERATION: update
+      JWT_SECRET: ${JWT_SECRET:?Error: JWT_SECRET environment variable must be set in production}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mus-network
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: docker/prod/frontend.Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+        VITE_WS_BASE_URL: ${VITE_WS_BASE_URL:-ws://localhost:8080}
+    container_name: mus-frontend-prod
+    restart: always
+    env_file:
+      - path: ../../.env
+        required: false
+    ports:
+      - "${PROD_FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+    networks:
+      - mus-network
+
+volumes:
+  postgres_prod_data:
+
+networks:
+  mus-network:
+    driver: bridge
