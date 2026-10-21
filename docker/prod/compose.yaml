@@ -11,7 +11,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mus_db}
       POSTGRES_USER: ${POSTGRES_USER:-mus_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD environment variable must be set in production}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD environment variable must be set in production}"
     # Security: Database port is not published to host in production; accessible only via internal mus-network
     volumes:
       - postgres_prod_data:/var/lib/postgresql/data
@@ -38,9 +38,9 @@ services:
       QUARKUS_DATASOURCE_DB_KIND: postgresql
       QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-mus_db}
       QUARKUS_DATASOURCE_USERNAME: ${POSTGRES_USER:-mus_user}
-      QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD environment variable must be set in production}
+      QUARKUS_DATASOURCE_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD environment variable must be set in production}"
       QUARKUS_HIBERNATE_ORM_DATABASE_GENERATION: update
-      JWT_SECRET: ${JWT_SECRET:?Error: JWT_SECRET environment variable must be set in production}
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET environment variable must be set in production}"
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     depends_on:
