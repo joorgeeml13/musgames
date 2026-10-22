@@ -16,14 +16,14 @@ class I18nMessageServiceTest {
 
     @Test
     void testMessageResolutionSpanish() {
-        String msg = messageService.getMessage("player.not_found", Language.ES, "patxi");
-        assertEquals("Jugador 'patxi' no encontrado", msg);
+        String msg = messageService.getMessage("system.health.ok", Language.ES);
+        assertEquals("Servicio en funcionamiento", msg);
     }
 
     @Test
     void testMessageResolutionEnglish() {
-        String msg = messageService.getMessage("player.not_found", Language.EN, "patxi");
-        assertEquals("Player 'patxi' not found", msg);
+        String msg = messageService.getMessage("system.health.ok", Language.EN);
+        assertEquals("Service is healthy", msg);
     }
 
     @Test

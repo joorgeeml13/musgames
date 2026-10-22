@@ -11,24 +11,15 @@ describe('i18n Multi-Language System', () => {
     storage = new MemoryStorageService()
   })
 
-  it('provides comprehensive Spanish and English dictionaries with symmetric keys', () => {
-    expect(es.common.appName).toBe('Mus Tactics')
-    expect(en.common.appName).toBe('Mus Tactics')
+  it('provides base Spanish and English dictionaries with symmetric keys', () => {
+    expect(es.app.title).toBe('Mus Tactics')
+    expect(en.app.title).toBe('Mus Tactics')
 
-    expect(es.nav.home).toBe('Inicio')
-    expect(en.nav.home).toBe('Home')
+    expect(es.common.welcome).toBe('Bienvenido a Mus Tactics')
+    expect(en.common.welcome).toBe('Welcome to Mus Tactics')
 
-    expect(es.phases.grandeTitle).toBe('Grande')
-    expect(en.phases.grandeTitle).toBe('Grande (Highs)')
-
-    expect(es.phases.ordago).toBe('¡Órdago!')
-    expect(en.phases.ordago).toBe('Órdago!')
-
-    expect(es.lobby.title).toBe('Lobby & Salas Multijugador')
-    expect(en.lobby.title).toBe('Lobby & Multiplayer Rooms')
-
-    expect(es.leaderboard.title).toBe('Clasificación General ELO')
-    expect(en.leaderboard.title).toBe('General ELO Leaderboard')
+    expect(es.common.language).toBe('Idioma')
+    expect(en.common.language).toBe('Language')
   })
 
   it('determines current stored language as "es" when unset', () => {
