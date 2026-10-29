@@ -3,15 +3,33 @@ package dev.ordago.shared.infrastructure.api.response;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
+@Schema(description = "Standard error response payload")
 public class ApiError {
+
+    @Schema(description = "Success flag, always false for errors", example = "false")
     private boolean success;
+
+    @Schema(description = "HTTP status code", example = "400")
     private int status;
+
+    @Schema(description = "HTTP error reason phrase", example = "Bad Request")
     private String error;
+
+    @Schema(description = "Application-specific error code", example = "VALIDATION_FAILED")
     private String code;
+
+    @Schema(description = "Error description message", example = "Invalid request payload")
     private String message;
+
+    @Schema(description = "Request URI path", example = "/api/v1/auth/login")
     private String path;
+
+    @Schema(description = "Timestamp when the error occurred", example = "2026-10-29T15:30:00Z")
     private Instant timestamp;
+
+    @Schema(description = "Detailed validation or contextual error items", example = "[\"email: Email must be a valid email address\"]")
     private List<String> details;
 
     public ApiError() {

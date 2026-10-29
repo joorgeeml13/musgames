@@ -1,11 +1,21 @@
 package dev.ordago.shared.infrastructure.api.response;
 
 import java.time.Instant;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
 
+@Schema(description = "Standard API response wrapper")
 public class ApiResponse<T> {
+
+    @Schema(description = "Indicates whether the operation was successful", example = "true")
     private boolean success;
+
+    @Schema(description = "Payload of the response")
     private T data;
+
+    @Schema(description = "Human-readable status or informational message", example = "OK")
     private String message;
+
+    @Schema(description = "Timestamp when the response was generated", example = "2026-10-29T15:30:00Z")
     private Instant timestamp;
 
     public ApiResponse() {

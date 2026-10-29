@@ -3,6 +3,13 @@ package dev.ordago.auth.infrastructure.api;
 import java.util.Objects;
 import java.util.UUID;
 import org.eclipse.microprofile.jwt.JsonWebToken;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.media.Content;
+import org.eclipse.microprofile.openapi.annotations.media.Schema;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
+import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirement;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 import io.quarkus.security.Authenticated;
 import io.vertx.core.http.HttpServerRequest;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -32,8 +39,10 @@ import dev.ordago.auth.infrastructure.api.dto.TokenResponse;
 import dev.ordago.auth.infrastructure.api.dto.UserInfoResponse;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.GetUserProfileUseCase;
+import dev.ordago.shared.infrastructure.api.response.ApiError;
 
 @Path("/api/v1/auth")
+@Tag(name = "Authentication", description = "Operations for registration, login, token refresh and session lifecycle")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @ApplicationScoped
@@ -67,6 +76,15 @@ public class AuthResource {
 
     @POST
     @Path("/register")
+    @Operation(summary = "Register a new player account", description = "Creates a new player account and initializes their profile with a Riot ID")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "201", description = "Account created successfully",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = AuthResponse.class))),
+            @APIResponse(responseCode = "400", description = "Validation failed for request fields",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "409", description = "Email or Riot ID already registered",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
     public Response register(@Valid RegisterRequest request, @Context HttpServerRequest httpRequest) {
         String clientIp = extractClientIp(httpRequest);
         RegisterUseCase.RegisterCommand command = new RegisterUseCase.RegisterCommand(
@@ -88,6 +106,17 @@ public class AuthResource {
 
     @POST
     @Path("/login")
+    @Operation(summary = "Authenticate user", description = "Verifies credentials, records active device session, and returns JWT access and refresh tokens")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "200", description = "Authentication successful",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = AuthResponse.class))),
+            @APIResponse(responseCode = "400", description = "Validation failed for request fields",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "401", description = "Invalid credentials",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "423", description = "Account is temporarily locked due to repeated failed login attempts",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
     public Response login(@Valid LoginRequest request, @Context HttpServerRequest httpRequest) {
         String clientIp = extractClientIp(httpRequest);
         LoginUseCase.LoginCommand command = new LoginUseCase.LoginCommand(
@@ -105,6 +134,15 @@ public class AuthResource {
 
     @POST
     @Path("/refresh")
+    @Operation(summary = "Refresh access token", description = "Rotates refresh token and issues a new JWT access token")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "200", description = "Token refreshed successfully",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = TokenResponse.class))),
+            @APIResponse(responseCode = "400", description = "Validation failed or refresh token missing",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "401", description = "Invalid or expired refresh token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
     public Response refresh(@Valid RefreshTokenRequest request, @Context HttpServerRequest httpRequest) {
         String clientIp = extractClientIp(httpRequest);
         RefreshTokenUseCase.RefreshTokenCommand command = new RefreshTokenUseCase.RefreshTokenCommand(
@@ -119,6 +157,10 @@ public class AuthResource {
     @POST
     @Path("/logout")
     @Consumes({MediaType.APPLICATION_JSON, MediaType.WILDCARD})
+    @Operation(summary = "Logout user", description = "Invalidates the active session or specified refresh token")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "204", description = "Session invalidated successfully")
+    })
     public Response logout(LogoutRequest request) {
         UUID sessionId = extractOptionalSessionId();
         String refreshToken = request != null ? request.refreshToken() : null;
@@ -130,6 +172,14 @@ public class AuthResource {
     @GET
     @Path("/me")
     @Authenticated
+    @SecurityRequirement(name = "jwtAuth")
+    @Operation(summary = "Get current authenticated user info", description = "Retrieves account and profile summary for the bearer token owner")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "200", description = "Current user information retrieved",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = UserInfoResponse.class))),
+            @APIResponse(responseCode = "401", description = "Unauthorized or expired token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
     public Response getCurrentUser() {
         UUID accountId = extractAccountId();
         Account account = getCurrentAccountUseCase.getAccountById(accountId);
