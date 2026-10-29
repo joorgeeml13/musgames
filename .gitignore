@@ -66,3 +66,6 @@ logs/
 
 # Docker volumes and temp data
 .docker-cache/
+
+# Orchestrator worktrees
+.worktrees/
