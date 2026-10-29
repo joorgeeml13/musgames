@@ -1,3 +1,2 @@
--- Initial seed data and schema extensions
-CREATE UNIQUE INDEX IF NOT EXISTS uq_user_profiles_riot_id ON user_profiles (LOWER(game_name), LOWER(tag_line));
-
+-- Schema migrations and DDL are now managed by Flyway (see db/migration/V1.0.0__initial_schema.sql).
+-- Keep this file empty or for non-DDL seed data if needed.
