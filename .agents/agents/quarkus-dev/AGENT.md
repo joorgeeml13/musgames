@@ -15,6 +15,7 @@ Before starting, read `.agents/rules/backend-quarkus.md` and `.agents/rules/code
 
 ## Architectural Standards
 - **Strict Hexagonal per Domain**: Follow the layout and dependency rules in `backend-quarkus.md` §1. No framework imports in `domain`.
+- **Value Objects over Primitive Obsession (Tactical DDD)**: Concepts with distinct validation, formatting, or domain rules (e.g., `Email`, `PasswordHash`, `RiotId`, `PhoneNumber`) must never be kept as raw primitives in `domain/model/`. Model them as immutable Java `record`s with constructor validation and normalization, throwing domain exceptions when invariants fail.
 - **Blocking Stack**: Imperative `quarkus-rest` + Hibernate ORM Panache. No Mutiny or Hibernate Reactive. Never block the event loop (see `backend-quarkus.md` §2).
 - **GraalVM Native-Ready**: Zero unindexed dynamic reflection, dynamic class-loading, or unregistered runtime proxies.
 - **Persistence**: Prevent N+1 queries using explicit join fetches. Keep `@Transactional` boundaries in application/infrastructure, never in `domain`.

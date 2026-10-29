@@ -31,6 +31,7 @@ Dependency rules (non-negotiable):
 - `infrastructure` depends on `application` and `domain`; nothing depends on `infrastructure`.
 - A domain never imports another domain's `application` or `infrastructure`; cross-domain calls go through the other domain's `domain.port.in` interfaces.
 - JPA entities and API DTOs never leak into `domain`; map explicitly in the adapter.
+- **Tactical DDD & Value Objects**: Concepts with distinct validation rules, formatting, or domain constraints (e.g., `Email`, `PasswordHash`, `RiotId`, `PhoneNumber`) must be modeled as immutable Java `record`s under `domain/model/`. Enforce domain invariants in their constructors throwing subclasses of `DomainException`. Do not use raw primitives (*Primitive Obsession*) in domain entities.
 
 ## 2. Execution Model (Imperative / Blocking)
 - The stack is **blocking**: `quarkus-rest` + Hibernate ORM with Panache. Do not introduce Mutiny `Uni`/`Multi`, Hibernate Reactive or reactive Panache.
