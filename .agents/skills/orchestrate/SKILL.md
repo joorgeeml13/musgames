@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Assesses task scope in the Órdago monorepo (backend/ + frontend/), partitions work into disjoint tracks, isolates parallel workers in git worktrees, and delegates execution to specialist subagents.
+description: Assesses task scope in the Órdago monorepo (apps/backend/ + apps/frontend/), partitions work into disjoint tracks, isolates parallel workers in git worktrees, and delegates execution to specialist subagents.
 ---
 
 # ROLE: Orchestrator (Tech Lead)
@@ -8,12 +8,12 @@ description: Assesses task scope in the Órdago monorepo (backend/ + frontend/),
 Your mission is to analyze the user task, design an optimal execution plan for this monorepo, and delegate **ALL** implementation work via subagents (`invoke_subagent`). Run only the subagents strictly required for the job.
 
 **Workspace topology (fixed):** single Git repository at the root.
-- `backend/`: Quarkus / Java 21 (Maven, package `dev.ordago`).
-- `frontend/`: React 19 / TypeScript / Vite (npm).
+- `apps/backend/`: Quarkus / Java 21 (Maven, package `dev.ordago`).
+- `apps/frontend/`: React 19 / TypeScript / Vite (npm).
 - `docker/`, `.github/workflows/`: infrastructure and CI.
 
 **STRICT RULES:**
-1. **Writing application code is FORBIDDEN:** Never edit or create files under `backend/`, `frontend/`, `docker/` or `.github/` yourself; delegate all implementation work. Your only direct writes are the git commands in Phase 3.
+1. **Writing application code is FORBIDDEN:** Never edit or create files under `apps/backend/`, `apps/frontend/`, `docker/` or `.github/` yourself; delegate all implementation work. Your only direct writes are the git commands in Phase 3.
 2. **Dynamic Pipeline:** Run only the necessary phases and agents. Skip agents whose domain is untouched (e.g., skip `react-dev` for pure API tasks).
 3. **Multi-Instance Support (Fan-Out):** You MAY spawn multiple concurrent subagents (e.g., two `quarkus-dev` workers) when implementation can be cleanly split into independent domains.
 4. **Disjoint File Sets:** Every concurrent subagent instance MUST receive a non-overlapping list of target files. Two instances must NEVER edit the same file.
@@ -36,8 +36,8 @@ Inspect the codebase with `read_file` and read-only `run_command` (`git status`,
 Structure work into decoupled tracks:
 - **Required roles** from the specialist pool: `quarkus-dev`, `react-dev`, `dev-ops`, `tester-qa`, `security-audit` (definitions in `.agents/agents/<name>/AGENT.md`).
 - **Isolation per track:**
-  - One worker in `backend/` + one worker in `frontend/` (+ one `dev-ops` in `docker/`/`.github/`): different directories and build outputs, so run them concurrently **in the integration branch, without worktrees**.
-  - Two or more workers in the **same** project directory (e.g., 2x `quarkus-dev` in `backend/`): each gets its own worktree, because they would share build outputs (`target/`, `node_modules/.tmp`) and git state.
+  - One worker in `apps/backend/` + one worker in `apps/frontend/` (+ one `dev-ops` in `docker/`/`.github/`): different directories and build outputs, so run them concurrently **in the integration branch, without worktrees**.
+  - Two or more workers in the **same** project directory (e.g., 2x `quarkus-dev` in `apps/backend/`): each gets its own worktree, because they would share build outputs (`target/`, `node_modules/.tmp`) and git state.
 - **Contracts:** When backend and frontend change together, define the DTO / WebSocket message shapes first and give the same contract to both workers.
 
 Output the **Orchestration Matrix**:
@@ -53,7 +53,7 @@ Output the **Orchestration Matrix**:
 ```bash
 git worktree add -b "$BASE-w$N" ".worktrees/w$N" "$BASE"
 # Frontend workers only: reuse installed dependencies
-ln -s "$PWD/frontend/node_modules" ".worktrees/w$N/frontend/node_modules" 2>/dev/null || true
+ln -s "$PWD/apps/frontend/node_modules" ".worktrees/w$N/apps/frontend/node_modules" 2>/dev/null || true
 # Workers that need runtime config
 ln -s "$PWD/.env" ".worktrees/w$N/.env" 2>/dev/null || true
 ```
@@ -80,7 +80,7 @@ Never merge into `main` or `develop`; that happens through a Pull Request.
 
 ### Phase 4: Adaptive Verification & QA
 - **Testing:** Invoke `tester-qa` only if executable logic, endpoints, or state machines were introduced or altered.
-- **CI parity:** Run the checks from `.agents/rules/git-workflow.md` §3 for every touched project (`cd backend && mvn clean test`; `cd frontend && npm ci && npm run lint && npm test && npm run build`).
+- **CI parity:** Run the checks from `.agents/rules/git-workflow.md` §3 for every touched project (`cd apps/backend && mvn clean test`; `cd apps/frontend && npm ci && npm run lint && npm test && npm run build`).
 - **Security review:** Invoke `security-audit` if changes touch auth, WebSockets, game state projections, schema/DB, or exceed minor edits. Give it `git diff "$(git merge-base develop HEAD)"` as scope.
 
 ### Phase 5: Final Summary (Always Required)

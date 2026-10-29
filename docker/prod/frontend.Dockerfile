@@ -10,7 +10,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Install dependencies using cache
-COPY frontend/package*.json ./
+COPY apps/frontend/package*.json ./
 RUN npm ci || npm install
 
 # Build arguments for client-side environment variables
@@ -21,7 +21,7 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ENV VITE_WS_BASE_URL=${VITE_WS_BASE_URL}
 
 # Copy frontend source files
-COPY frontend/ ./
+COPY apps/frontend/ ./
 
 # Build production bundle
 RUN npm run build

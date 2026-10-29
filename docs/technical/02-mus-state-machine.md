@@ -1,6 +1,6 @@
 # 02. Technical Specification — Mus State Machine & Rules Engine
 
-**Módulo:** Backend Core (`/backend/src/main/java/.../engine`)  
+**Módulo:** Backend Core (`/apps/backend/src/main/java/.../engine`)  
 **Patrón:** Finite State Machine (FSM) Determinista con eventos asíncronos.  
 **Objetivo:** Garantizar que el servidor sea la única fuente de verdad, previniendo estados inconsistentes o trampas de cliente.
 

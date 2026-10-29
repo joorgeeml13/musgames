@@ -1,6 +1,6 @@
 # 04. Technical Specification — Database Schema & 2v2 Elo Rating
 
-**Módulo:** Persistencia y Competitivo (`/backend/.../domain` y `/backend/.../service/elo`)  
+**Módulo:** Persistencia y Competitivo (`/apps/backend/.../domain` y `/apps/backend/.../service/elo`)  
 **Motor:** PostgreSQL 16+ con Hibernate ORM / Panache  
 **Objetivo:** Persistir cuentas, perfiles (Riot ID), partidas cerradas, inventario unificado de skins por carta y calcular variaciones de ELO por parejas.
 

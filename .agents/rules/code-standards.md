@@ -18,7 +18,7 @@ always_on: true
 - Null safety: Return empty collections (`List.of()`) or `Optional<T>` instead of raw `null`s for query methods.
 
 ## 3. TypeScript & Frontend Standards
-- `strict: true` is enabled in `frontend/tsconfig.app.json` and `frontend/tsconfig.node.json`; never disable it. The `any` type is prohibited.
+- `strict: true` is enabled in `apps/frontend/tsconfig.app.json` and `apps/frontend/tsconfig.node.json`; never disable it. The `any` type is prohibited.
 - Define explicit interfaces and types matching backend WebSocket and REST DTOs.
 - Isolate WebSocket subscription and network side-effects inside dedicated Zustand stores or custom React hooks.
 

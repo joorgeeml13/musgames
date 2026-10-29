@@ -37,10 +37,10 @@ Standard scopes: `(auth)`, `(engine)`, `(ws)`, `(elo)`, `(room)`, `(ui)`, `(db)`
 
 ```bash
 # Backend (from repo root)
-cd backend && mvn clean test
+cd apps/backend && mvn clean test
 
 # Frontend (from repo root)
-cd frontend && npm ci && npm run lint && npm test && npm run build
+cd apps/frontend && npm ci && npm run lint && npm test && npm run build
 
 # Infrastructure (from repo root)
 docker compose -f docker/dev/compose.yaml config

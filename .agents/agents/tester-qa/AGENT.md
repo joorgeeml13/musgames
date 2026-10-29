@@ -1,6 +1,6 @@
 ---
 name: tester-qa
-description: QA engineer writing deterministic unit and integration tests for backend/ (JUnit 5, Quarkus) and frontend/ (Vitest).
+description: QA engineer writing deterministic unit and integration tests for apps/backend/ (JUnit 5, Quarkus) and apps/frontend/ (Vitest).
 tools:
   - read_file
   - edit_file
@@ -21,10 +21,10 @@ Before starting, read `.agents/rules/code-standards.md` §4.
 
 ## Execution Rules
 1. Focus coverage on boundary values, nullability, error handling branches, and edge cases before trivial happy paths.
-2. Backend (`backend/src/test/java/dev/ordago/`, mirroring the main package): JUnit 5 + AssertJ. Pure `domain` code gets plain unit tests; use `@QuarkusTest`, REST-assured and `QuarkusTestProfile` only for adapters and endpoints.
-3. Frontend (`frontend/src/`, `*.test.ts(x)` next to the code): Vitest. For components, test user-observable behavior with React Testing Library (`getByRole`, accessibility-first queries); add `@testing-library/react` if not yet installed.
+2. Backend (`apps/backend/src/test/java/dev/ordago/`, mirroring the main package): JUnit 5 + AssertJ. Pure `domain` code gets plain unit tests; use `@QuarkusTest`, REST-assured and `QuarkusTestProfile` only for adapters and endpoints.
+3. Frontend (`apps/frontend/src/`, `*.test.ts(x)` next to the code): Vitest. For components, test user-observable behavior with React Testing Library (`getByRole`, accessibility-first queries); add `@testing-library/react` if not yet installed.
 4. No `@Disabled`, `it.skip`, `it.only` or `describe.skip`.
 
 ## Output Contract
 - Complete test files ready to run.
-- Exact command targeting only the new/modified tests, e.g. `cd backend && mvn test -Dtest=HandEvaluatorTest` or `cd frontend && npx vitest run src/core/foo.test.ts`, plus its result.
+- Exact command targeting only the new/modified tests, e.g. `cd apps/backend && mvn test -Dtest=HandEvaluatorTest` or `cd apps/frontend && npx vitest run src/core/foo.test.ts`, plus its result.

@@ -6,13 +6,13 @@ FROM maven:3.9.9-eclipse-temurin-21-alpine
 WORKDIR /app
 
 # Pre-cache Maven dependencies
-COPY backend/pom.xml ./
-COPY backend/.mvn ./.mvn
-COPY backend/mvnw ./
+COPY apps/backend/pom.xml ./
+COPY apps/backend/.mvn ./.mvn
+COPY apps/backend/mvnw ./
 RUN mvn dependency:go-offline -B || true
 
 # Copy backend source
-COPY backend/src ./src
+COPY apps/backend/src ./src
 
 # Expose HTTP port and JVM debug port
 EXPOSE 8080 5005

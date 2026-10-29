@@ -1,11 +1,11 @@
 ---
 description: Frontend architecture, routing, table focus UI and Cyber-Tavern design system.
-globs: ["frontend/**"]
+globs: ["apps/frontend/**"]
 ---
 
 # 04. Frontend Architecture, UI & Real-Time Client
 
-Frontend code lives in `frontend/`. Package manager is **npm** (`package-lock.json`); never use pnpm, yarn or bun.
+Frontend code lives in `apps/frontend/`. Package manager is **npm** (`package-lock.json`); never use pnpm, yarn or bun.
 
 ## 1. Architecture & Routing
 - **Core:** React 19 + TypeScript (strict) + Vite.

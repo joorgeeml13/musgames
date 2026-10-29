@@ -9,8 +9,8 @@ always_on: true
 Órdago (`ordago.gg`) is a high-stakes, real-time web platform for classic Spanish tavern table games, launching with competitive Mus and expanding into Tute, Guiñote, Pocha, and Dominoes. It blends the ranked rating rigor of Chess.com with the psychological tension and first-person bluffs of *Liar's Bar*.
 
 ## 2. Repository Layout (Monorepo)
-- `backend/`: Quarkus 3 / Java 21 service (Maven, base package `dev.ordago`).
-- `frontend/`: React 19 / TypeScript / Vite SPA (npm).
+- `apps/backend/`: Quarkus 3 / Java 21 service (Maven, base package `dev.ordago`).
+- `apps/frontend/`: React 19 / TypeScript / Vite SPA (npm).
 - `docker/`: Dev and prod Compose files.
 - `docs/`: Product and technical source-of-truth documents (see §4).
 - `.github/workflows/ci.yml`: The CI gate every change must pass.

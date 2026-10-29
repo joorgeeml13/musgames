@@ -46,7 +46,7 @@ services:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
       - "127.0.0.1:5005:5005"
     volumes:
-      - ../../backend:/app
+      - ../../apps/backend:/app
       - maven_repo_dev:/root/.m2
     depends_on:
       postgres:
@@ -71,7 +71,7 @@ services:
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
     volumes:
-      - ../../frontend:/app
+      - ../../apps/frontend:/app
       - /app/node_modules
     depends_on:
       - backend

@@ -10,13 +10,13 @@ FROM maven:3.9.9-eclipse-temurin-21-alpine AS builder
 WORKDIR /build
 
 # Pre-cache Maven dependencies
-COPY backend/pom.xml ./
-COPY backend/.mvn ./.mvn
-COPY backend/mvnw ./
+COPY apps/backend/pom.xml ./
+COPY apps/backend/.mvn ./.mvn
+COPY apps/backend/mvnw ./
 RUN mvn dependency:go-offline -B || true
 
 # Copy source code and build production fast-jar package
-COPY backend/src ./src
+COPY apps/backend/src ./src
 RUN mvn clean package -DskipTests -Dquarkus.package.jar.type=fast-jar
 
 # ------------------------------------------------------------------------------

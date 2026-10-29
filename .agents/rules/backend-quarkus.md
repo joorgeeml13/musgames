@@ -1,11 +1,11 @@
 ---
 description: Backend architecture (strict hexagonal per domain), Quarkus stack, in-memory game state and WebSockets.
-globs: ["backend/**"]
+globs: ["apps/backend/**"]
 ---
 
 # 03. Backend Architecture & Quarkus Technical Rules
 
-Java sources live in `backend/src/main/java/dev/ordago/`. Run every Maven command from `backend/`.
+Java sources live in `apps/backend/src/main/java/dev/ordago/`. Run every Maven command from `apps/backend/`.
 
 ## 1. Strict Hexagonal Architecture per Domain
 Each business domain (`auth`, `profile`, `room`, `engine`, `elo`, ...) is a self-contained package with exactly this layout. Cross-cutting code lives in `dev.ordago.shared` with the same layout.

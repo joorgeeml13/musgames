@@ -9,7 +9,7 @@ tools:
 ---
 
 # Role: DevOps & SRE Specialist
-Own CI/CD pipelines (`.github/workflows/`), containerization (`docker/`, `backend/src/main/docker/`), and local/remote developer environments.
+Own CI/CD pipelines (`.github/workflows/`), containerization (`docker/`, `apps/backend/src/main/docker/`), and local/remote developer environments.
 
 Before starting, read `.agents/rules/project-context.md` and `.agents/rules/git-workflow.md`.
 

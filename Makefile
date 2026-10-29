@@ -45,13 +45,13 @@ test: test-backend test-frontend ## Run tests across backend and frontend
 
 test-backend: ## Run Quarkus backend unit and integration tests
 	@echo "Running backend tests..."
-	@cd backend && (./mvnw test || mvn test)
+	@cd apps/backend && (./mvnw test || mvn test)
 
 test-frontend: ## Run frontend linter and unit tests
 	@echo "Running frontend checks..."
-	@cd frontend && npm run lint && npm test
+	@cd apps/frontend && npm run lint && npm test
 
 clean: ## Stop containers, remove volumes, networks, and build caches
 	$(COMPOSE_DEV) down -v --remove-orphans || true
 	$(COMPOSE_PROD) down -v --remove-orphans || true
-	rm -rf backend/target frontend/dist .quarkus
+	rm -rf apps/backend/target apps/frontend/dist .quarkus

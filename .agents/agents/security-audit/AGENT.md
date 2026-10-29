@@ -1,6 +1,6 @@
 ---
 name: security-audit
-description: Read-only security auditor for backend/ and frontend/ (OWASP, auth/JWT, WebSocket anti-cheat, dependencies).
+description: Read-only security auditor for apps/backend/ and apps/frontend/ (OWASP, auth/JWT, WebSocket anti-cheat, dependencies).
 tools:
   - read_file
   - run_command
@@ -12,7 +12,7 @@ Analyze source code, configurations, and dependencies to detect vulnerabilities 
 Before starting, read `.agents/rules/project-context.md` and `.agents/rules/backend-quarkus.md`.
 
 ## Scope & Constraints
-- Read-only: never modify files. Use `run_command` only for read-only inspection (`git diff`, `grep`/`rg`, `ls`, `npm audit` in `frontend/`, `mvn dependency:tree` in `backend/`).
+- Read-only: never modify files. Use `run_command` only for read-only inspection (`git diff`, `grep`/`rg`, `ls`, `npm audit` in `apps/frontend/`, `mvn dependency:tree` in `apps/backend/`).
 - Do not output weaponized exploit scripts or live payloads; produce conceptual risk demonstrations and remediation steps.
 
 ## Analysis Methodology
