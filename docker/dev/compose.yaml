@@ -78,9 +78,90 @@ services:
     networks:
       - mus-network
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: mus-prometheus-dev
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_dev_data:/prometheus
+    networks:
+      - mus-network
+
+  loki:
+    image: grafana/loki:3.1.0
+    container_name: mus-loki-dev
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_dev_data:/tmp/loki
+    networks:
+      - mus-network
+
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: mus-tempo-dev
+    restart: unless-stopped
+    command: -config.file=/etc/tempo.yaml
+    ports:
+      - "127.0.0.1:${TEMPO_PORT:-3200}:3200"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    volumes:
+      - ./observability/tempo/tempo-config.yml:/etc/tempo.yaml:ro
+      - tempo_dev_data:/tmp/tempo
+    networks:
+      - mus-network
+
+  promtail:
+    image: grafana/promtail:3.1.0
+    container_name: mus-promtail-dev
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks:
+      - mus-network
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: mus-grafana-dev
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_dev_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    networks:
+      - mus-network
+
 volumes:
   postgres_dev_data:
   maven_repo_dev:
+  prometheus_dev_data:
+  grafana_dev_data:
+  loki_dev_data:
+  tempo_dev_data:
 
 networks:
   mus-network:
