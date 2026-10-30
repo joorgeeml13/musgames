@@ -80,6 +80,7 @@ jobs:
         run: |
           POSTGRES_PASSWORD=ci_test_password \
           JWT_SECRET=ci_test_jwt_secret_key_minimum_256_bits_for_validation \
+          RABBITMQ_PASSWORD=ci_test_rabbitmq_password \
           docker compose -f docker/prod/compose.yaml config
 
   ci-gate:

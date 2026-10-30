@@ -25,6 +25,30 @@ services:
     networks:
       - mus-network
 
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: mus-rabbitmq-dev
+    restart: unless-stopped
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-mus_guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-mus_guest_dev_password}
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_dev_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - mus-network
+
   backend:
     build:
       context: ../..
@@ -42,6 +66,10 @@ services:
       QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-mus_dev_password_change_in_prod}
       QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY: validate
       JWT_SECRET: ${JWT_SECRET:-mus_super_secret_jwt_key_at_least_32_characters_long_for_security}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-mus_guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-mus_guest_dev_password}
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
       - "127.0.0.1:5005:5005"
@@ -50,6 +78,8 @@ services:
       - maven_repo_dev:/root/.m2
     depends_on:
       postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - mus-network
@@ -157,6 +187,7 @@ services:
 
 volumes:
   postgres_dev_data:
+  rabbitmq_dev_data:
   maven_repo_dev:
   prometheus_dev_data:
   grafana_dev_data:

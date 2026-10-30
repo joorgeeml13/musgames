@@ -24,6 +24,37 @@ services:
     networks:
       - mus-network
 
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    container_name: mus-rabbitmq-prod
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+        reservations:
+          memory: 256M
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-mus_user}
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD environment variable must be set in production}"
+    # Security: RabbitMQ ports are not published to host in production; accessible only via internal mus-network
+    volumes:
+      - rabbitmq_prod_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - mus-network
+
   backend:
     build:
       context: ../..
@@ -41,10 +72,16 @@ services:
       QUARKUS_DATASOURCE_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD environment variable must be set in production}"
       QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY: validate
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET environment variable must be set in production}"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USER:-mus_user}
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD environment variable must be set in production}"
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks:
       - mus-network
@@ -70,6 +107,7 @@ services:
 
 volumes:
   postgres_prod_data:
+  rabbitmq_prod_data:
 
 networks:
   mus-network:
