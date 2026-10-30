@@ -15,7 +15,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
         ),
         tags = {
                 @Tag(name = "Authentication", description = "Operations for registration, login, token refresh and session lifecycle"),
-                @Tag(name = "User Profiles", description = "Operations for user profiles and Riot ID public identities"),
+                @Tag(name = "User Profiles", description = "Operations for user profiles and player tag public identities"),
                 @Tag(name = "System", description = "System health check endpoints")
         }
 )

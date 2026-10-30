@@ -52,13 +52,13 @@ public class UserProfileRepositoryAdapter implements UserProfileRepositoryPort {
     }
 
     @Override
-    public Optional<UserProfile> findByRiotId(String gameName, String tagLine) {
-        return panacheRepository.findByRiotId(gameName, tagLine).map(UserProfileEntity::toDomain);
+    public Optional<UserProfile> findByPlayerTag(String gameName, String tagLine) {
+        return panacheRepository.findByPlayerTag(gameName, tagLine).map(UserProfileEntity::toDomain);
     }
 
     @Override
-    public boolean existsByRiotId(String gameName, String tagLine) {
-        return panacheRepository.existsByRiotId(gameName, tagLine);
+    public boolean existsByPlayerTag(String gameName, String tagLine) {
+        return panacheRepository.existsByPlayerTag(gameName, tagLine);
     }
 
     @Override

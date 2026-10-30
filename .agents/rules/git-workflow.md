@@ -8,7 +8,7 @@ always_on: true
 ## 1. Branch Strategy (GitFlow-lite)
 - `main`: Production release branch. Only deployable, thoroughly tested code reaches this branch.
 - `develop`: Shared integration and staging branch. Feature branches start from and merge back into `develop`.
-- `feat/<module>-<short-description>`: Feature work (e.g., `feat/auth-riot-id`, `feat/engine-pares-evaluator`).
+- `feat/<module>-<short-description>`: Feature work (e.g., `feat/auth-player-tag`, `feat/engine-pares-evaluator`).
 - `fix/<module>-<short-description>`: Bug and exploit fixes.
 - `refactor/<module>-<short-description>`: Architectural improvements without functional changes.
 

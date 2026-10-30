@@ -77,6 +77,6 @@ CREATE INDEX idx_user_sessions_account_id ON user_sessions(account_id);
 CREATE UNIQUE INDEX idx_user_sessions_refresh_hash ON user_sessions(refresh_token_hash);
 CREATE INDEX idx_user_sessions_prev_refresh_hash ON user_sessions(previous_refresh_token_hash);
 
-CREATE INDEX idx_user_profiles_riot_id ON user_profiles(game_name, tag_line);
-CREATE UNIQUE INDEX uq_user_profiles_riot_id ON user_profiles(LOWER(game_name), LOWER(tag_line));
+CREATE INDEX idx_user_profiles_player_tag ON user_profiles(game_name, tag_line);
+CREATE UNIQUE INDEX uq_user_profiles_player_tag ON user_profiles(LOWER(game_name), LOWER(tag_line));
 CREATE INDEX idx_user_profiles_elo ON user_profiles (elo_rating DESC);

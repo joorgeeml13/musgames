@@ -28,8 +28,8 @@ import dev.ordago.auth.domain.port.out.AccountRepositoryPort;
 import dev.ordago.auth.domain.port.out.PasswordEncoderPort;
 import dev.ordago.auth.domain.port.out.TokenProviderPort;
 import dev.ordago.auth.domain.port.out.UserSessionRepositoryPort;
-import dev.ordago.profile.domain.exception.RiotIdAlreadyTakenException;
-import dev.ordago.profile.domain.model.RiotId;
+import dev.ordago.profile.domain.exception.PlayerTagAlreadyTakenException;
+import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -104,7 +104,7 @@ class AuthServiceTest {
     }
 
     @Test
-    void shouldRejectRegistrationWithDuplicateRiotId() {
+    void shouldRejectRegistrationWithDuplicatePlayerTag() {
         authService.register(new RegisterUseCase.RegisterCommand(
                 "player1@ordago.dev",
                 "Password123!",
@@ -115,7 +115,7 @@ class AuthServiceTest {
                 "127.0.0.1"
         ));
 
-        RegisterUseCase.RegisterCommand duplicateRiotIdCmd = new RegisterUseCase.RegisterCommand(
+        RegisterUseCase.RegisterCommand duplicatePlayerTagCmd = new RegisterUseCase.RegisterCommand(
                 "player2@ordago.dev",
                 "Password123!",
                 "musmaster",
@@ -125,8 +125,8 @@ class AuthServiceTest {
                 "127.0.0.1"
         );
 
-        assertThatThrownBy(() -> authService.register(duplicateRiotIdCmd))
-                .isInstanceOf(RiotIdAlreadyTakenException.class);
+        assertThatThrownBy(() -> authService.register(duplicatePlayerTagCmd))
+                .isInstanceOf(PlayerTagAlreadyTakenException.class);
     }
 
     @Test
@@ -578,17 +578,17 @@ class AuthServiceTest {
 
         @Override
         public UserProfile createUserProfile(CreateProfileCommand command) {
-            RiotId riotId = new RiotId(command.gameName(), command.tagLine());
+            PlayerTag playerTag = new PlayerTag(command.gameName(), command.tagLine());
             boolean alreadyExists = createdProfiles.values().stream()
-                    .anyMatch(p -> p.getGameName().equalsIgnoreCase(riotId.canonicalGameName())
-                            && p.getTagLine().equalsIgnoreCase(riotId.canonicalTagLine()));
+                    .anyMatch(p -> p.getGameName().equalsIgnoreCase(playerTag.canonicalGameName())
+                            && p.getTagLine().equalsIgnoreCase(playerTag.canonicalTagLine()));
             if (alreadyExists) {
-                throw new RiotIdAlreadyTakenException(command.gameName(), command.tagLine());
+                throw new PlayerTagAlreadyTakenException(command.gameName(), command.tagLine());
             }
 
             UserProfile profile = UserProfile.createDefault(
                     command.accountId(),
-                    riotId,
+                    playerTag,
                     command.locale()
             );
             createdProfiles.put(command.accountId(), profile);

@@ -7,5 +7,5 @@ public interface GetUserProfileUseCase {
 
     UserProfile getProfileById(UUID accountId);
 
-    UserProfile getProfileByRiotId(String gameName, String tagLine);
+    UserProfile getProfileByPlayerTag(String gameName, String tagLine);
 }

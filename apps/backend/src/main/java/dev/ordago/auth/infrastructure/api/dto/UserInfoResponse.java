@@ -19,14 +19,14 @@ public record UserInfoResponse(
         @Schema(description = "Indicates whether the email has been verified", example = "true")
         boolean emailVerified,
 
-        @Schema(description = "In-game name component of Riot ID", example = "ManoMaestro")
+        @Schema(description = "In-game name component of player tag", example = "ManoMaestro")
         String gameName,
 
-        @Schema(description = "Tag line component of Riot ID", example = "ESP1")
+        @Schema(description = "Tag line component of player tag", example = "ESP1")
         String tagLine,
 
-        @Schema(description = "Formatted Riot ID (GameName#TAG)", example = "ManoMaestro#ESP1")
-        String riotId,
+        @Schema(description = "Formatted player tag (GameName#TAG)", example = "ManoMaestro#ESP1")
+        String playerTag,
 
         @Schema(description = "Custom display name", example = "Don Mus")
         String displayName,
@@ -48,7 +48,7 @@ public record UserInfoResponse(
                 account.isEmailVerified(),
                 profile != null ? profile.getGameName() : null,
                 profile != null ? profile.getTagLine() : null,
-                profile != null ? profile.getRiotId().formatted() : null,
+                profile != null ? profile.getPlayerTag().formatted() : null,
                 profile != null ? profile.getDisplayName() : null,
                 profile != null ? profile.getEloRating() : 1200,
                 profile != null ? profile.getActiveTitle() : "Novato del Chinchón",

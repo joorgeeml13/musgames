@@ -31,7 +31,7 @@ Dependency rules (non-negotiable):
 - `infrastructure` depends on `application` and `domain`; nothing depends on `infrastructure`.
 - A domain never imports another domain's `application` or `infrastructure`; cross-domain calls go through the other domain's `domain.port.in` interfaces.
 - JPA entities and API DTOs never leak into `domain`; map explicitly in the adapter.
-- **Tactical DDD & Value Objects**: Concepts with distinct validation rules, formatting, or domain constraints (e.g., `Email`, `PasswordHash`, `RiotId`, `PhoneNumber`) must be modeled as immutable Java `record`s under `domain/model/`. Enforce domain invariants in their constructors throwing subclasses of `DomainException`. Do not use raw primitives (*Primitive Obsession*) in domain entities.
+- **Tactical DDD & Value Objects**: Concepts with distinct validation rules, formatting, or domain constraints (e.g., `Email`, `PasswordHash`, `PlayerTag`, `PhoneNumber`) must be modeled as immutable Java `record`s under `domain/model/`. Enforce domain invariants in their constructors throwing subclasses of `DomainException`. Do not use raw primitives (*Primitive Obsession*) in domain entities.
 
 ## 2. Execution Model (Imperative / Blocking)
 - The stack is **blocking**: `quarkus-rest` + Hibernate ORM with Panache. Do not introduce Mutiny `Uni`/`Multi`, Hibernate Reactive or reactive Panache.
@@ -40,7 +40,7 @@ Dependency rules (non-negotiable):
 ## 3. Auth & User Profile Domain
 - **`Account`:** Security credentials hashed with Argon2id, role assignments (`USER`, `ADMIN`), brute-force counters (`failed_login_attempts`, `locked_until`).
 - **`UserSession`:** Per-device session tracking (`device_id`). Store `refreshTokenHash` (SHA-256) and `previousRefreshTokenHash` with a 30s grace window to absorb network retry races while detecting token reuse/theft.
-- **`UserProfile`:** Public player identity using the **Riot ID pattern** (`game_name` max 24 chars + `tag_line` max 6 chars, composite unique index on `LOWER(game_name), LOWER(tag_line)`).
+- **`UserProfile`:** Public player identity using the **Player Tag pattern** (`game_name` max 24 chars + `tag_line` max 6 chars, composite unique index on `LOWER(game_name), LOWER(tag_line)`).
 
 ## 4. In-Memory Hot State (Mus Engine)
 - **Zero-Persistence During Gameplay:** Active rooms and hands live exclusively in JVM RAM managed by a concurrent `RoomManager` (`ConcurrentHashMap`). Never write to PostgreSQL on bets, mus declarations, or discards.

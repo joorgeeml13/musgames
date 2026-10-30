@@ -4,9 +4,9 @@ import java.util.Objects;
 import java.util.UUID;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.transaction.Transactional;
-import dev.ordago.profile.domain.exception.RiotIdAlreadyTakenException;
+import dev.ordago.profile.domain.exception.PlayerTagAlreadyTakenException;
 import dev.ordago.profile.domain.exception.UserProfileNotFoundException;
-import dev.ordago.profile.domain.model.RiotId;
+import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
 import dev.ordago.profile.domain.port.in.GetUserProfileUseCase;
@@ -26,15 +26,15 @@ public class UserProfileService implements CreateUserProfileUseCase, GetUserProf
     @Transactional
     public UserProfile createUserProfile(CreateProfileCommand command) {
         Objects.requireNonNull(command, "CreateProfileCommand cannot be null");
-        RiotId riotId = new RiotId(command.gameName(), command.tagLine());
+        PlayerTag playerTag = new PlayerTag(command.gameName(), command.tagLine());
 
-        if (userProfileRepository.existsByRiotId(riotId.gameName(), riotId.tagLine())) {
-            throw new RiotIdAlreadyTakenException(riotId.gameName(), riotId.tagLine());
+        if (userProfileRepository.existsByPlayerTag(playerTag.gameName(), playerTag.tagLine())) {
+            throw new PlayerTagAlreadyTakenException(playerTag.gameName(), playerTag.tagLine());
         }
 
         UserProfile userProfile = UserProfile.createDefault(
                 command.accountId(),
-                riotId,
+                playerTag,
                 command.locale()
         );
 
@@ -51,10 +51,10 @@ public class UserProfileService implements CreateUserProfileUseCase, GetUserProf
 
     @Override
     @Transactional
-    public UserProfile getProfileByRiotId(String gameName, String tagLine) {
-        RiotId riotId = new RiotId(gameName, tagLine);
-        return userProfileRepository.findByRiotId(riotId.gameName(), riotId.tagLine())
-                .orElseThrow(() -> new UserProfileNotFoundException(riotId.gameName(), riotId.tagLine()));
+    public UserProfile getProfileByPlayerTag(String gameName, String tagLine) {
+        PlayerTag playerTag = new PlayerTag(gameName, tagLine);
+        return userProfileRepository.findByPlayerTag(playerTag.gameName(), playerTag.tagLine())
+                .orElseThrow(() -> new UserProfileNotFoundException(playerTag.gameName(), playerTag.tagLine()));
     }
 
     @Override

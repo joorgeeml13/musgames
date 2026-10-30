@@ -76,13 +76,13 @@ public class AuthResource {
 
     @POST
     @Path("/register")
-    @Operation(summary = "Register a new player account", description = "Creates a new player account and initializes their profile with a Riot ID")
+    @Operation(summary = "Register a new player account", description = "Creates a new player account and initializes their profile with a player tag")
     @APIResponses(value = {
             @APIResponse(responseCode = "201", description = "Account created successfully",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = AuthResponse.class))),
             @APIResponse(responseCode = "400", description = "Validation failed for request fields",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
-            @APIResponse(responseCode = "409", description = "Email or Riot ID already registered",
+            @APIResponse(responseCode = "409", description = "Email or player tag already registered",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
     })
     public Response register(@Valid RegisterRequest request, @Context HttpServerRequest httpRequest) {

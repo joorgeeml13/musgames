@@ -84,7 +84,7 @@ class FlywayMigrationIT {
 
     @Test
     @DisplayName("Database should enforce case-insensitive UNIQUE constraint on user_profiles(LOWER(game_name), LOWER(tag_line))")
-    void shouldEnforceCaseInsensitiveUniqueRiotIdConstraintOnUserProfiles() throws SQLException {
+    void shouldEnforceCaseInsensitiveUniquePlayerTagConstraintOnUserProfiles() throws SQLException {
         // Arrange
         UUID accountId1 = UUID.randomUUID();
         UUID accountId2 = UUID.randomUUID();
@@ -102,7 +102,7 @@ class FlywayMigrationIT {
 
             // Act & Assert: try inserting with different casing for game_name and tag_line
             assertThatThrownBy(() -> insertUserProfile(accountId2, gameNameLower, tagLineLower, now))
-                    .as("Inserting profile with duplicate case-insensitive Riot ID should violate unique constraint")
+                    .as("Inserting profile with duplicate case-insensitive player tag should violate unique constraint")
                     .isInstanceOf(SQLException.class);
         } finally {
             deleteAccount(accountId1);

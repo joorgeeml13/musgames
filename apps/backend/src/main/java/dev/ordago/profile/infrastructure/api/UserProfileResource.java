@@ -31,7 +31,7 @@ import dev.ordago.profile.infrastructure.api.dto.UserProfileResponse;
 import dev.ordago.shared.infrastructure.api.response.ApiError;
 
 @Path("/api/v1/profiles")
-@Tag(name = "User Profiles", description = "Operations for user profiles and Riot ID public identities")
+@Tag(name = "User Profiles", description = "Operations for user profiles and player tag public identities")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @ApplicationScoped
@@ -101,7 +101,7 @@ public class UserProfileResource {
 
     @GET
     @Path("/{gameName}/{tagLine}")
-    @Operation(summary = "Get public user profile by Riot ID", description = "Retrieves public profile information and statistics using a Riot ID")
+    @Operation(summary = "Get public user profile by player tag", description = "Retrieves public profile information and statistics using a player tag")
     @APIResponses(value = {
             @APIResponse(responseCode = "200", description = "Public profile retrieved successfully",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = PublicUserProfileResponse.class))),
@@ -111,12 +111,12 @@ public class UserProfileResource {
                     content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
     })
     public Response getPublicProfile(
-            @Parameter(description = "Game name portion of the Riot ID", example = "ManoMaestro", required = true)
+            @Parameter(description = "Game name portion of the player tag", example = "ManoMaestro", required = true)
             @PathParam("gameName") String gameName,
-            @Parameter(description = "Tag line portion of the Riot ID (without '#')", example = "ESP1", required = true)
+            @Parameter(description = "Tag line portion of the player tag (without '#')", example = "ESP1", required = true)
             @PathParam("tagLine") String tagLine
     ) {
-        UserProfile profile = getUserProfileUseCase.getProfileByRiotId(gameName, tagLine);
+        UserProfile profile = getUserProfileUseCase.getProfileByPlayerTag(gameName, tagLine);
         return Response.ok(PublicUserProfileResponse.fromDomain(profile)).build();
     }
 

@@ -73,9 +73,9 @@ class AuthResourceIT {
 
     @Test
     @Order(3)
-    void shouldRejectRegistrationWithDuplicateRiotIdSameCase() {
+    void shouldRejectRegistrationWithDuplicatePlayerTagSameCase() {
         Map<String, Object> duplicatePayload = Map.of(
-                "email", "it_dup_riot1@ordago.dev",
+                "email", "it_dup_tag1@ordago.dev",
                 "password", "AnotherPassword123!",
                 "gameName", "ITMusMaster",
                 "tagLine", "ESP"
@@ -92,9 +92,9 @@ class AuthResourceIT {
 
     @Test
     @Order(4)
-    void shouldRejectRegistrationWithDuplicateRiotIdDifferentCase() {
+    void shouldRejectRegistrationWithDuplicatePlayerTagDifferentCase() {
         Map<String, Object> duplicatePayload = Map.of(
-                "email", "it_dup_riot2@ordago.dev",
+                "email", "it_dup_tag2@ordago.dev",
                 "password", "AnotherPassword123!",
                 "gameName", "itmusmaster",
                 "tagLine", "esp"

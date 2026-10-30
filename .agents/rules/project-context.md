@@ -29,4 +29,4 @@ always_on: true
 - `docs/technical/01-architecture.md` (System layout, RAM vs. DB boundary, anti-cheat)
 - `docs/technical/02-mus-state-machine.md` (Deterministic FSM, betting transitions, Mano tiebreakers)
 - `docs/technical/03-websocket-protocol.md` (JSON WebSocket protocol, camera focus, gesture events)
-- `docs/technical/04-database-and-elo.md` (PostgreSQL DDL schema, Riot ID pattern, 2v2 Elo math)
+- `docs/technical/04-database-and-elo.md` (PostgreSQL DDL schema, Player Tag pattern, 2v2 Elo math)

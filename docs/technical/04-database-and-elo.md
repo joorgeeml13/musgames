@@ -2,7 +2,7 @@
 
 **Módulo:** Persistencia y Competitivo (`/apps/backend/.../domain` y `/apps/backend/.../service/elo`)  
 **Motor:** PostgreSQL 16+ con Hibernate ORM / Panache  
-**Objetivo:** Persistir cuentas, perfiles (Riot ID), partidas cerradas, inventario unificado de skins por carta y calcular variaciones de ELO por parejas.
+**Objetivo:** Persistir cuentas, perfiles (Player Tag), partidas cerradas, inventario unificado de skins por carta y calcular variaciones de ELO por parejas.
 
 ## 1. Esquema Relacional de Base de Datos (DDL)
 
@@ -59,7 +59,7 @@ CREATE INDEX idx_sessions_account ON user_sessions (account_id);
 CREATE INDEX idx_sessions_device ON user_sessions (device_id);
 CREATE INDEX idx_sessions_token_hash ON user_sessions (refresh_token_hash);
 
--- 3. Tabla de Perfiles Públicos (Sistema Riot ID: game_name#tag_line)
+-- 3. Tabla de Perfiles Públicos (Sistema Player Tag: game_name#tag_line)
 CREATE TABLE user_profiles (
     id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     game_name VARCHAR(24) NOT NULL,
@@ -84,8 +84,8 @@ CREATE TABLE user_profiles (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Unicidad estricta estilo Riot ID (ej: Jorge#MAD es único)
-CREATE UNIQUE INDEX idx_profiles_riot_id ON user_profiles (LOWER(game_name), LOWER(tag_line));
+-- Unicidad estricta estilo Player Tag (ej: Jorge#MAD es único)
+CREATE UNIQUE INDEX idx_profiles_player_tag ON user_profiles (LOWER(game_name), LOWER(tag_line));
 CREATE INDEX idx_profiles_elo ON user_profiles (elo_rating DESC);
 
 -- 4. Catálogo de Skins (Carta a Carta — Compartido entre todos los juegos de baraja española)

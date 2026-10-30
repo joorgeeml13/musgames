@@ -7,7 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import dev.ordago.profile.domain.exception.RiotIdAlreadyTakenException;
+import dev.ordago.profile.domain.exception.PlayerTagAlreadyTakenException;
 import dev.ordago.profile.domain.exception.UserProfileNotFoundException;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
@@ -49,7 +49,7 @@ class UserProfileServiceTest {
     }
 
     @Test
-    void shouldPreventDuplicateRiotIdRegardlessOfCase() {
+    void shouldPreventDuplicatePlayerTagRegardlessOfCase() {
         UUID id1 = UUID.randomUUID();
         profileService.createUserProfile(new CreateUserProfileUseCase.CreateProfileCommand(
                 id1,
@@ -64,11 +64,11 @@ class UserProfileServiceTest {
                 "musero",
                 "01",
                 "es-ES"
-        ))).isInstanceOf(RiotIdAlreadyTakenException.class);
+        ))).isInstanceOf(PlayerTagAlreadyTakenException.class);
     }
 
     @Test
-    void shouldFindProfileByRiotIdCaseInsensitive() {
+    void shouldFindProfileByPlayerTagCaseInsensitive() {
         UUID id = UUID.randomUUID();
         profileService.createUserProfile(new CreateUserProfileUseCase.CreateProfileCommand(
                 id,
@@ -77,7 +77,7 @@ class UserProfileServiceTest {
                 "es-ES"
         ));
 
-        UserProfile found = profileService.getProfileByRiotId("muserorey", "esp1");
+        UserProfile found = profileService.getProfileByPlayerTag("muserorey", "esp1");
 
         assertThat(found).isNotNull();
         assertThat(found.getId()).isEqualTo(id);
@@ -125,7 +125,7 @@ class UserProfileServiceTest {
         UUID nonexistent = UUID.randomUUID();
         assertThatThrownBy(() -> profileService.getProfileById(nonexistent))
                 .isInstanceOf(UserProfileNotFoundException.class);
-        assertThatThrownBy(() -> profileService.getProfileByRiotId("Nonexistent", "00"))
+        assertThatThrownBy(() -> profileService.getProfileByPlayerTag("Nonexistent", "00"))
                 .isInstanceOf(UserProfileNotFoundException.class);
     }
 
@@ -174,7 +174,7 @@ class UserProfileServiceTest {
         }
 
         @Override
-        public Optional<UserProfile> findByRiotId(String gameName, String tagLine) {
+        public Optional<UserProfile> findByPlayerTag(String gameName, String tagLine) {
             return store.values().stream()
                     .filter(p -> p.getGameName().equalsIgnoreCase(gameName.trim().toLowerCase(Locale.ROOT))
                             && p.getTagLine().equalsIgnoreCase(tagLine.trim().toLowerCase(Locale.ROOT)))
@@ -182,8 +182,8 @@ class UserProfileServiceTest {
         }
 
         @Override
-        public boolean existsByRiotId(String gameName, String tagLine) {
-            return findByRiotId(gameName, tagLine).isPresent();
+        public boolean existsByPlayerTag(String gameName, String tagLine) {
+            return findByPlayerTag(gameName, tagLine).isPresent();
         }
 
         @Override

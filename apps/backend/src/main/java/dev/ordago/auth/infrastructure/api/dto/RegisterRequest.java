@@ -17,7 +17,7 @@ public record RegisterRequest(
         @Size(min = 8, max = 128, message = "Password must be between 8 and 128 characters")
         String password,
 
-        @Schema(description = "In-game display name for Riot ID identity", example = "ManoMaestro", required = true, minLength = 2, maxLength = 24)
+        @Schema(description = "In-game display name for player tag identity", example = "ManoMaestro", required = true, minLength = 2, maxLength = 24)
         @NotBlank(message = "Game name is required")
         @Size(min = 2, max = 24, message = "Game name must be between 2 and 24 characters")
         String gameName,

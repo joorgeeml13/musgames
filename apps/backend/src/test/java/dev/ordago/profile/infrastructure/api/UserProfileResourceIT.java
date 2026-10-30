@@ -49,7 +49,7 @@ class UserProfileResourceIT {
 
     @Test
     @Order(1)
-    void shouldGetPublicProfileByRiotId() {
+    void shouldGetPublicProfileByPlayerTag() {
         given()
                 .when()
                 .get("/api/v1/profiles/ProfilePro/PRO1")
@@ -57,7 +57,7 @@ class UserProfileResourceIT {
                 .statusCode(200)
                 .body("gameName", equalTo("ProfilePro"))
                 .body("tagLine", equalTo("PRO1"))
-                .body("riotId", equalTo("ProfilePro#PRO1"))
+                .body("playerTag", equalTo("ProfilePro#PRO1"))
                 .body("eloRating", equalTo(1200))
                 .body("id", nullValue())
                 .body("soundEffectsVolume", nullValue());
@@ -65,7 +65,7 @@ class UserProfileResourceIT {
 
     @Test
     @Order(2)
-    void shouldGetPublicProfileByRiotIdCaseInsensitive() {
+    void shouldGetPublicProfileByPlayerTagCaseInsensitive() {
         given()
                 .when()
                 .get("/api/v1/profiles/profilepro/pro1")
@@ -73,7 +73,7 @@ class UserProfileResourceIT {
                 .statusCode(200)
                 .body("gameName", equalTo("ProfilePro"))
                 .body("tagLine", equalTo("PRO1"))
-                .body("riotId", equalTo("ProfilePro#PRO1"));
+                .body("playerTag", equalTo("ProfilePro#PRO1"));
     }
 
     @Test
@@ -88,7 +88,7 @@ class UserProfileResourceIT {
 
     @Test
     @Order(4)
-    void shouldReturn400ForInvalidPublicProfileRiotId() {
+    void shouldReturn400ForInvalidPublicProfilePlayerTag() {
         // gameName too short (< 2 characters)
         given()
                 .when()

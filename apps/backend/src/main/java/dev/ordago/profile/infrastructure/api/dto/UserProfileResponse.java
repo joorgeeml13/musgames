@@ -10,14 +10,14 @@ public record UserProfileResponse(
         @Schema(description = "User account ID", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
         UUID id,
 
-        @Schema(description = "Game name portion of Riot ID", example = "ManoMaestro")
+        @Schema(description = "Game name portion of player tag", example = "ManoMaestro")
         String gameName,
 
-        @Schema(description = "Tag line portion of Riot ID", example = "ESP1")
+        @Schema(description = "Tag line portion of player tag", example = "ESP1")
         String tagLine,
 
-        @Schema(description = "Formatted Riot ID (GameName#TAG)", example = "ManoMaestro#ESP1")
-        String riotId,
+        @Schema(description = "Formatted player tag (GameName#TAG)", example = "ManoMaestro#ESP1")
+        String playerTag,
 
         @Schema(description = "Custom display name", example = "Don Mus")
         String displayName,
@@ -78,7 +78,7 @@ public record UserProfileResponse(
                 domain.getId(),
                 domain.getGameName(),
                 domain.getTagLine(),
-                domain.getRiotId().formatted(),
+                domain.getPlayerTag().formatted(),
                 domain.getDisplayName(),
                 domain.getEloRating(),
                 domain.getGamesPlayed(),

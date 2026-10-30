@@ -6,7 +6,7 @@ import java.util.UUID;
 
 public class UserProfile {
     private final UUID id;
-    private RiotId riotId;
+    private PlayerTag playerTag;
     private String displayName;
     private int eloRating;
     private int gamesPlayed;
@@ -28,7 +28,7 @@ public class UserProfile {
 
     public UserProfile(
             UUID id,
-            RiotId riotId,
+            PlayerTag playerTag,
             String displayName,
             int eloRating,
             int gamesPlayed,
@@ -49,8 +49,8 @@ public class UserProfile {
             Instant updatedAt
     ) {
         this.id = Objects.requireNonNull(id, "User ID cannot be null");
-        this.riotId = Objects.requireNonNull(riotId, "RiotId cannot be null");
-        this.displayName = displayName != null ? displayName : riotId.gameName();
+        this.playerTag = Objects.requireNonNull(playerTag, "PlayerTag cannot be null");
+        this.displayName = displayName != null ? displayName : playerTag.gameName();
         this.eloRating = eloRating;
         this.gamesPlayed = gamesPlayed;
         this.gamesWon = gamesWon;
@@ -70,12 +70,12 @@ public class UserProfile {
         this.updatedAt = updatedAt != null ? updatedAt : this.createdAt;
     }
 
-    public static UserProfile createDefault(UUID id, RiotId riotId, String locale) {
+    public static UserProfile createDefault(UUID id, PlayerTag playerTag, String locale) {
         Instant now = Instant.now();
         return new UserProfile(
                 id,
-                riotId,
-                riotId.gameName(),
+                playerTag,
+                playerTag.gameName(),
                 1200,
                 0,
                 0,
@@ -156,16 +156,16 @@ public class UserProfile {
         return id;
     }
 
-    public RiotId getRiotId() {
-        return riotId;
+    public PlayerTag getPlayerTag() {
+        return playerTag;
     }
 
     public String getGameName() {
-        return riotId.gameName();
+        return playerTag.gameName();
     }
 
     public String getTagLine() {
-        return riotId.tagLine();
+        return playerTag.tagLine();
     }
 
     public String getDisplayName() {

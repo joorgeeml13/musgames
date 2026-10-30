@@ -10,9 +10,9 @@ public interface UserProfileRepositoryPort {
 
     Optional<UserProfile> findById(UUID id);
 
-    Optional<UserProfile> findByRiotId(String gameName, String tagLine);
+    Optional<UserProfile> findByPlayerTag(String gameName, String tagLine);
 
-    boolean existsByRiotId(String gameName, String tagLine);
+    boolean existsByPlayerTag(String gameName, String tagLine);
 
     boolean existsById(UUID id);
 }

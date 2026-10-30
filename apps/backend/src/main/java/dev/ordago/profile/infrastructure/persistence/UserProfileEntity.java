@@ -8,14 +8,14 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
-import dev.ordago.profile.domain.model.RiotId;
+import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
 
 @Entity
 @Table(
         name = "user_profiles",
         indexes = {
-                @Index(name = "idx_user_profiles_riot_id", columnList = "game_name, tag_line")
+                @Index(name = "idx_user_profiles_player_tag", columnList = "game_name, tag_line")
         }
 )
 public class UserProfileEntity extends PanacheEntityBase {
@@ -87,7 +87,7 @@ public class UserProfileEntity extends PanacheEntityBase {
     public UserProfile toDomain() {
         return new UserProfile(
                 this.id,
-                new RiotId(this.gameName, this.tagLine),
+                new PlayerTag(this.gameName, this.tagLine),
                 this.displayName,
                 this.eloRating,
                 this.gamesPlayed,

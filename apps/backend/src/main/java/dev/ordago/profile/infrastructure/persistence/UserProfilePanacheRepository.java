@@ -9,7 +9,7 @@ import io.quarkus.hibernate.orm.panache.PanacheRepositoryBase;
 @ApplicationScoped
 public class UserProfilePanacheRepository implements PanacheRepositoryBase<UserProfileEntity, UUID> {
 
-    public Optional<UserProfileEntity> findByRiotId(String gameName, String tagLine) {
+    public Optional<UserProfileEntity> findByPlayerTag(String gameName, String tagLine) {
         if (gameName == null || tagLine == null) {
             return Optional.empty();
         }
@@ -20,7 +20,7 @@ public class UserProfilePanacheRepository implements PanacheRepositoryBase<UserP
         ).firstResultOptional();
     }
 
-    public boolean existsByRiotId(String gameName, String tagLine) {
+    public boolean existsByPlayerTag(String gameName, String tagLine) {
         if (gameName == null || tagLine == null) {
             return false;
         }
