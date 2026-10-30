@@ -13,4 +13,8 @@ public interface AccountRepositoryPort {
     Optional<Account> findByEmail(String email);
 
     boolean existsByEmail(String email);
+
+    Optional<Account> findByEmailVerificationToken(String token);
+
+    Optional<Account> findByPasswordResetToken(String token);
 }

@@ -8,13 +8,20 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import java.util.Map;
+import jakarta.inject.Inject;
+import dev.ordago.auth.infrastructure.persistence.AccountEntity;
+import dev.ordago.auth.infrastructure.persistence.AccountPanacheRepository;
 import static io.restassured.RestAssured.given;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.notNullValue;
 
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class AuthResourceIT {
+
+    @Inject
+    AccountPanacheRepository accountPanacheRepository;
 
     private static String accessToken;
     private static String refreshToken;
@@ -282,5 +289,189 @@ class AuthResourceIT {
                 .post("/api/v1/auth/refresh")
                 .then()
                 .statusCode(401);
+    }
+
+    @Test
+    @Order(14)
+    void shouldRejectEmailVerificationWithInvalidToken() {
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of("token", "completely-invalid-verification-token"))
+                .when()
+                .post("/api/v1/auth/verify-email")
+                .then()
+                .statusCode(400);
+    }
+
+    @Test
+    @Order(15)
+    void shouldVerifyEmailSuccessfully() {
+        AccountEntity account = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
+        String token = account.emailVerificationToken;
+        assertThat(token).isNotBlank();
+
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of("token", token))
+                .when()
+                .post("/api/v1/auth/verify-email")
+                .then()
+                .statusCode(204);
+
+        AccountEntity updated = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
+        assertThat(updated.emailVerified).isTrue();
+        assertThat(updated.emailVerificationToken).isNull();
+    }
+
+    @Test
+    @Order(16)
+    void shouldHandleResendVerificationRequest() {
+        // Unverified user / verified user / non-existent user should all return 204
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of("email", "it_player@ordago.dev"))
+                .when()
+                .post("/api/v1/auth/resend-verification")
+                .then()
+                .statusCode(204);
+
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of("email", "nonexistent@ordago.dev"))
+                .when()
+                .post("/api/v1/auth/resend-verification")
+                .then()
+                .statusCode(204);
+    }
+
+    @Test
+    @Order(17)
+    void shouldHandleForgotPasswordRequest() {
+        // Non-existent email returns 204 (anti-enumeration)
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of("email", "nobody@ordago.dev"))
+                .when()
+                .post("/api/v1/auth/forgot-password")
+                .then()
+                .statusCode(204);
+
+        // Real user generates reset token
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of("email", "it_player@ordago.dev"))
+                .when()
+                .post("/api/v1/auth/forgot-password")
+                .then()
+                .statusCode(204);
+
+        AccountEntity account = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
+        assertThat(account.passwordResetToken).isNotBlank();
+        assertThat(account.passwordResetExpiresAt).isNotNull();
+    }
+
+    @Test
+    @Order(18)
+    void shouldRejectResetPasswordWithInvalidToken() {
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of(
+                        "token", "invalid-reset-token",
+                        "newPassword", "NewValidPassword123!"
+                ))
+                .when()
+                .post("/api/v1/auth/reset-password")
+                .then()
+                .statusCode(400);
+    }
+
+    @Test
+    @Order(19)
+    void shouldResetPasswordSuccessfully() {
+        AccountEntity account = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
+        String resetToken = account.passwordResetToken;
+
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of(
+                        "token", resetToken,
+                        "newPassword", "ResetSuccessfulPassword123!"
+                ))
+                .when()
+                .post("/api/v1/auth/reset-password")
+                .then()
+                .statusCode(204);
+
+        // Login with old password fails
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of(
+                        "email", "it_player@ordago.dev",
+                        "password", "SecureMusPassword123!"
+                ))
+                .when()
+                .post("/api/v1/auth/login")
+                .then()
+                .statusCode(401);
+
+        // Login with new password succeeds and refreshes accessToken
+        Response response = given()
+                .contentType(ContentType.JSON)
+                .body(Map.of(
+                        "email", "it_player@ordago.dev",
+                        "password", "ResetSuccessfulPassword123!"
+                ))
+                .when()
+                .post("/api/v1/auth/login")
+                .then()
+                .statusCode(200)
+                .extract().response();
+
+        accessToken = response.path("accessToken");
+        assertThat(accessToken).isNotBlank();
+    }
+
+    @Test
+    @Order(20)
+    void shouldRejectChangePasswordWithWrongCurrentPassword() {
+        given()
+                .header("Authorization", "Bearer " + accessToken)
+                .contentType(ContentType.JSON)
+                .body(Map.of(
+                        "currentPassword", "CompletelyWrongOldPassword!",
+                        "newPassword", "YetAnotherPassword123!"
+                ))
+                .when()
+                .post("/api/v1/auth/change-password")
+                .then()
+                .statusCode(401);
+    }
+
+    @Test
+    @Order(21)
+    void shouldChangePasswordSuccessfully() {
+        given()
+                .header("Authorization", "Bearer " + accessToken)
+                .contentType(ContentType.JSON)
+                .body(Map.of(
+                        "currentPassword", "ResetSuccessfulPassword123!",
+                        "newPassword", "FinalChangedPassword123!"
+                ))
+                .when()
+                .post("/api/v1/auth/change-password")
+                .then()
+                .statusCode(204);
+
+        // Login with final password succeeds
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of(
+                        "email", "it_player@ordago.dev",
+                        "password", "FinalChangedPassword123!"
+                ))
+                .when()
+                .post("/api/v1/auth/login")
+                .then()
+                .statusCode(200);
     }
 }

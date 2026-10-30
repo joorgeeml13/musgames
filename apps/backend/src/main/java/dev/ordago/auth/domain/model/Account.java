@@ -2,9 +2,12 @@ package dev.ordago.auth.domain.model;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
+import dev.ordago.auth.domain.exception.InvalidPasswordResetTokenException;
+import dev.ordago.auth.domain.exception.InvalidVerificationTokenException;
+import dev.ordago.auth.domain.exception.PasswordResetTokenExpiredException;
+import dev.ordago.auth.domain.exception.VerificationTokenExpiredException;
 
 public class Account {
 
@@ -194,10 +197,56 @@ public class Account {
         this.updatedAt = this.deletedAt;
     }
 
+    public void generateEmailVerificationToken(Duration validity) {
+        Objects.requireNonNull(validity, "validity cannot be null");
+        this.emailVerificationToken = UUID.randomUUID().toString();
+        this.emailVerificationExpiresAt = Instant.now().plus(validity);
+        this.updatedAt = Instant.now();
+    }
+
     public void verifyEmail() {
         this.emailVerified = true;
         this.emailVerificationToken = null;
         this.emailVerificationExpiresAt = null;
+        this.updatedAt = Instant.now();
+    }
+
+    public void verifyEmail(String token) {
+        if (token == null || token.isBlank() || this.emailVerificationToken == null || !this.emailVerificationToken.equals(token)) {
+            throw new InvalidVerificationTokenException();
+        }
+        if (this.emailVerificationExpiresAt == null || !this.emailVerificationExpiresAt.isAfter(Instant.now())) {
+            throw new VerificationTokenExpiredException();
+        }
+        this.emailVerified = true;
+        this.emailVerificationToken = null;
+        this.emailVerificationExpiresAt = null;
+        this.updatedAt = Instant.now();
+    }
+
+    public void generatePasswordResetToken(Duration validity) {
+        Objects.requireNonNull(validity, "validity cannot be null");
+        this.passwordResetToken = UUID.randomUUID().toString();
+        this.passwordResetExpiresAt = Instant.now().plus(validity);
+        this.updatedAt = Instant.now();
+    }
+
+    public void resetPassword(String token, PasswordHash newPasswordHash) {
+        Objects.requireNonNull(newPasswordHash, "newPasswordHash cannot be null");
+        if (token == null || token.isBlank() || this.passwordResetToken == null || !this.passwordResetToken.equals(token)) {
+            throw new InvalidPasswordResetTokenException();
+        }
+        if (this.passwordResetExpiresAt == null || !this.passwordResetExpiresAt.isAfter(Instant.now())) {
+            throw new PasswordResetTokenExpiredException();
+        }
+        this.passwordHash = newPasswordHash;
+        this.passwordResetToken = null;
+        this.passwordResetExpiresAt = null;
+        this.updatedAt = Instant.now();
+    }
+
+    public void changePassword(PasswordHash newPasswordHash) {
+        this.passwordHash = Objects.requireNonNull(newPasswordHash, "newPasswordHash cannot be null");
         this.updatedAt = Instant.now();
     }
 

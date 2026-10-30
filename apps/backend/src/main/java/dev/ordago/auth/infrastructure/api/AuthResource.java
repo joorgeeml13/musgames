@@ -24,22 +24,33 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import dev.ordago.auth.domain.model.Account;
 import dev.ordago.auth.domain.model.AuthTokens;
+import dev.ordago.auth.domain.port.in.ChangePasswordUseCase;
 import dev.ordago.auth.domain.port.in.GetCurrentAccountUseCase;
 import dev.ordago.auth.domain.port.in.LoginUseCase;
 import dev.ordago.auth.domain.port.in.LogoutUseCase;
 import dev.ordago.auth.domain.port.in.RefreshTokenUseCase;
 import dev.ordago.auth.domain.port.in.RegisterUseCase;
 import dev.ordago.auth.domain.port.in.RegisterUseCase.AuthResult;
+import dev.ordago.auth.domain.port.in.RequestPasswordResetUseCase;
+import dev.ordago.auth.domain.port.in.ResendVerificationEmailUseCase;
+import dev.ordago.auth.domain.port.in.ResetPasswordUseCase;
+import dev.ordago.auth.domain.port.in.VerifyEmailUseCase;
 import dev.ordago.auth.infrastructure.api.dto.AuthResponse;
+import dev.ordago.auth.infrastructure.api.dto.ChangePasswordRequest;
+import dev.ordago.auth.infrastructure.api.dto.ForgotPasswordRequest;
 import dev.ordago.auth.infrastructure.api.dto.LoginRequest;
 import dev.ordago.auth.infrastructure.api.dto.LogoutRequest;
 import dev.ordago.auth.infrastructure.api.dto.RefreshTokenRequest;
 import dev.ordago.auth.infrastructure.api.dto.RegisterRequest;
+import dev.ordago.auth.infrastructure.api.dto.ResendVerificationRequest;
+import dev.ordago.auth.infrastructure.api.dto.ResetPasswordRequest;
 import dev.ordago.auth.infrastructure.api.dto.TokenResponse;
 import dev.ordago.auth.infrastructure.api.dto.UserInfoResponse;
+import dev.ordago.auth.infrastructure.api.dto.VerifyEmailRequest;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.GetUserProfileUseCase;
 import dev.ordago.shared.infrastructure.api.response.ApiError;
+import dev.ordago.shared.infrastructure.i18n.RequestLanguageContext;
 
 @Path("/api/v1/auth")
 @Tag(name = "Authentication", description = "Operations for registration, login, token refresh and session lifecycle")
@@ -54,6 +65,12 @@ public class AuthResource {
     private final LogoutUseCase logoutUseCase;
     private final GetCurrentAccountUseCase getCurrentAccountUseCase;
     private final GetUserProfileUseCase getUserProfileUseCase;
+    private final VerifyEmailUseCase verifyEmailUseCase;
+    private final ResendVerificationEmailUseCase resendVerificationEmailUseCase;
+    private final RequestPasswordResetUseCase requestPasswordResetUseCase;
+    private final ResetPasswordUseCase resetPasswordUseCase;
+    private final ChangePasswordUseCase changePasswordUseCase;
+    private final RequestLanguageContext languageContext;
     private final JsonWebToken jwt;
 
     public AuthResource(
@@ -63,6 +80,12 @@ public class AuthResource {
             LogoutUseCase logoutUseCase,
             GetCurrentAccountUseCase getCurrentAccountUseCase,
             GetUserProfileUseCase getUserProfileUseCase,
+            VerifyEmailUseCase verifyEmailUseCase,
+            ResendVerificationEmailUseCase resendVerificationEmailUseCase,
+            RequestPasswordResetUseCase requestPasswordResetUseCase,
+            ResetPasswordUseCase resetPasswordUseCase,
+            ChangePasswordUseCase changePasswordUseCase,
+            RequestLanguageContext languageContext,
             JsonWebToken jwt
     ) {
         this.registerUseCase = Objects.requireNonNull(registerUseCase, "RegisterUseCase cannot be null");
@@ -71,6 +94,12 @@ public class AuthResource {
         this.logoutUseCase = Objects.requireNonNull(logoutUseCase, "LogoutUseCase cannot be null");
         this.getCurrentAccountUseCase = Objects.requireNonNull(getCurrentAccountUseCase, "GetCurrentAccountUseCase cannot be null");
         this.getUserProfileUseCase = Objects.requireNonNull(getUserProfileUseCase, "GetUserProfileUseCase cannot be null");
+        this.verifyEmailUseCase = Objects.requireNonNull(verifyEmailUseCase, "VerifyEmailUseCase cannot be null");
+        this.resendVerificationEmailUseCase = Objects.requireNonNull(resendVerificationEmailUseCase, "ResendVerificationEmailUseCase cannot be null");
+        this.requestPasswordResetUseCase = Objects.requireNonNull(requestPasswordResetUseCase, "RequestPasswordResetUseCase cannot be null");
+        this.resetPasswordUseCase = Objects.requireNonNull(resetPasswordUseCase, "ResetPasswordUseCase cannot be null");
+        this.changePasswordUseCase = Objects.requireNonNull(changePasswordUseCase, "ChangePasswordUseCase cannot be null");
+        this.languageContext = Objects.requireNonNull(languageContext, "RequestLanguageContext cannot be null");
         this.jwt = Objects.requireNonNull(jwt, "JsonWebToken cannot be null");
     }
 
@@ -87,6 +116,9 @@ public class AuthResource {
     })
     public Response register(@Valid RegisterRequest request, @Context HttpServerRequest httpRequest) {
         String clientIp = extractClientIp(httpRequest);
+        String language = (languageContext != null && languageContext.getLanguage() != null)
+                ? languageContext.getLanguage().getCode()
+                : "es";
         RegisterUseCase.RegisterCommand command = new RegisterUseCase.RegisterCommand(
                 request.email(),
                 request.password(),
@@ -94,7 +126,8 @@ public class AuthResource {
                 request.tagLine(),
                 request.deviceId(),
                 request.deviceName(),
-                clientIp
+                clientIp,
+                language
         );
 
         AuthResult result = registerUseCase.register(command);
@@ -185,6 +218,82 @@ public class AuthResource {
         Account account = getCurrentAccountUseCase.getAccountById(accountId);
         UserProfile profile = getUserProfileUseCase.getProfileById(accountId);
         return Response.ok(UserInfoResponse.of(account, profile)).build();
+    }
+
+    @POST
+    @Path("/verify-email")
+    @Operation(summary = "Verify account email", description = "Validates the email verification token and marks the account email as verified")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "204", description = "Email verified successfully"),
+            @APIResponse(responseCode = "400", description = "Invalid or expired verification token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response verifyEmail(@Valid VerifyEmailRequest request) {
+        verifyEmailUseCase.verifyEmail(request.token());
+        return Response.noContent().build();
+    }
+
+    @POST
+    @Path("/resend-verification")
+    @Operation(summary = "Resend verification email", description = "Sends a new verification token to the user's email if the account exists and is not verified")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "204", description = "Verification email sent if account exists and is unverified"),
+            @APIResponse(responseCode = "400", description = "Validation failed for request fields",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response resendVerification(@Valid ResendVerificationRequest request) {
+        String language = (languageContext != null && languageContext.getLanguage() != null)
+                ? languageContext.getLanguage().getCode()
+                : "es";
+        resendVerificationEmailUseCase.resendVerificationEmail(request.email(), language);
+        return Response.noContent().build();
+    }
+
+    @POST
+    @Path("/forgot-password")
+    @Operation(summary = "Request password reset", description = "Generates a password reset token and sends a reset email if the account exists and is active")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "204", description = "Password reset instructions sent if account exists and is active"),
+            @APIResponse(responseCode = "400", description = "Validation failed for request fields",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response forgotPassword(@Valid ForgotPasswordRequest request) {
+        String language = (languageContext != null && languageContext.getLanguage() != null)
+                ? languageContext.getLanguage().getCode()
+                : "es";
+        requestPasswordResetUseCase.requestPasswordReset(request.email(), language);
+        return Response.noContent().build();
+    }
+
+    @POST
+    @Path("/reset-password")
+    @Operation(summary = "Reset password with token", description = "Resets user password using the token received by email and revokes all active sessions")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "204", description = "Password reset successfully"),
+            @APIResponse(responseCode = "400", description = "Invalid or expired reset token or validation failed",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response resetPassword(@Valid ResetPasswordRequest request) {
+        resetPasswordUseCase.resetPassword(request.token(), request.newPassword());
+        return Response.noContent().build();
+    }
+
+    @POST
+    @Path("/change-password")
+    @Authenticated
+    @SecurityRequirement(name = "jwtAuth")
+    @Operation(summary = "Change password for authenticated user", description = "Verifies current password, updates it to the new password, and revokes all active sessions")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "204", description = "Password changed successfully"),
+            @APIResponse(responseCode = "400", description = "Validation failed for request fields",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "401", description = "Invalid current credentials or unauthorized",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response changePassword(@Valid ChangePasswordRequest request) {
+        UUID accountId = extractAccountId();
+        changePasswordUseCase.changePassword(accountId, request.currentPassword(), request.newPassword());
+        return Response.noContent().build();
     }
 
     private String extractClientIp(HttpServerRequest httpRequest) {

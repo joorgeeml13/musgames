@@ -60,4 +60,14 @@ public class AccountRepositoryAdapter implements AccountRepositoryPort {
     public boolean existsByEmail(String email) {
         return panacheRepository.existsByEmail(email);
     }
+
+    @Override
+    public Optional<Account> findByEmailVerificationToken(String token) {
+        return panacheRepository.findByEmailVerificationToken(token).map(AccountEntity::toDomain);
+    }
+
+    @Override
+    public Optional<Account> findByPasswordResetToken(String token) {
+        return panacheRepository.findByPasswordResetToken(token).map(AccountEntity::toDomain);
+    }
 }

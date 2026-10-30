@@ -2,6 +2,7 @@ package dev.ordago.auth.application;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -14,10 +15,17 @@ import dev.ordago.auth.domain.exception.AccountBannedException;
 import dev.ordago.auth.domain.exception.AccountLockedException;
 import dev.ordago.auth.domain.exception.EmailAlreadyExistsException;
 import dev.ordago.auth.domain.exception.InvalidCredentialsException;
+import dev.ordago.auth.domain.exception.InvalidPasswordResetTokenException;
+import dev.ordago.auth.domain.exception.InvalidVerificationTokenException;
+import dev.ordago.auth.domain.exception.PasswordResetTokenExpiredException;
+import dev.ordago.auth.domain.exception.SessionExpiredException;
 import dev.ordago.auth.domain.exception.SessionNotFoundException;
 import dev.ordago.auth.domain.exception.SessionRevokedException;
+import dev.ordago.auth.domain.exception.VerificationTokenExpiredException;
 import dev.ordago.auth.domain.model.Account;
 import dev.ordago.auth.domain.model.AuthTokens;
+import dev.ordago.auth.domain.model.Email;
+import dev.ordago.auth.domain.model.PasswordHash;
 import dev.ordago.auth.domain.model.UserSession;
 import dev.ordago.auth.domain.port.in.LoginUseCase;
 import dev.ordago.auth.domain.port.in.LogoutUseCase;
@@ -28,6 +36,8 @@ import dev.ordago.auth.domain.port.out.AccountRepositoryPort;
 import dev.ordago.auth.domain.port.out.PasswordEncoderPort;
 import dev.ordago.auth.domain.port.out.TokenProviderPort;
 import dev.ordago.auth.domain.port.out.UserSessionRepositoryPort;
+import dev.ordago.notification.domain.port.in.SendEmailUseCase;
+import dev.ordago.notification.domain.port.in.SendEmailUseCase.SendEmailCommand;
 import dev.ordago.profile.domain.exception.PlayerTagAlreadyTakenException;
 import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
@@ -43,6 +53,7 @@ class AuthServiceTest {
     private StubPasswordEncoder passwordEncoder;
     private StubTokenProvider tokenProvider;
     private StubCreateUserProfileUseCase createUserProfileUseCase;
+    private StubSendEmailUseCase sendEmailUseCase;
 
     @BeforeEach
     void setUp() {
@@ -51,6 +62,7 @@ class AuthServiceTest {
         passwordEncoder = new StubPasswordEncoder();
         tokenProvider = new StubTokenProvider();
         createUserProfileUseCase = new StubCreateUserProfileUseCase();
+        sendEmailUseCase = new StubSendEmailUseCase();
 
         authService = new AuthService(
                 accountRepository,
@@ -58,9 +70,12 @@ class AuthServiceTest {
                 passwordEncoder,
                 tokenProvider,
                 createUserProfileUseCase,
+                sendEmailUseCase,
                 5,
                 15,
-                30
+                30,
+                24,
+                60
         );
     }
 
@@ -453,6 +468,369 @@ class AuthServiceTest {
         assertThat(session.getRevocationReason()).isEqualTo("USER_LOGOUT");
     }
 
+    @Test
+    void shouldEmitVerificationEmailOnRegistration() {
+        sendEmailUseCase.sentEmails.clear();
+
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "verify_event@ordago.dev",
+                "Password123!",
+                "VerifyUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1",
+                "es"
+        ));
+
+        assertThat(sendEmailUseCase.sentEmails).hasSize(1);
+        SendEmailCommand emailCmd = sendEmailUseCase.sentEmails.getFirst();
+        assertThat(emailCmd.recipient()).isEqualTo("verify_event@ordago.dev");
+        assertThat(emailCmd.template()).isEqualTo("email-verification");
+        assertThat(emailCmd.templateData()).containsKey("verificationUrl");
+        assertThat(emailCmd.templateData().get("verificationUrl")).isEqualTo(reg.account().getEmailVerificationToken());
+        assertThat(emailCmd.language()).isEqualTo("es");
+    }
+
+    @Test
+    void shouldVerifyEmailSuccessfully() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "verify_ok@ordago.dev",
+                "Password123!",
+                "VerifyOkUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        String token = reg.account().getEmailVerificationToken();
+        assertThat(token).isNotBlank();
+
+        authService.verifyEmail(token);
+
+        Account account = accountRepository.findById(reg.account().getId()).orElseThrow();
+        assertThat(account.isEmailVerified()).isTrue();
+        assertThat(account.getEmailVerificationToken()).isNull();
+        assertThat(account.getEmailVerificationExpiresAt()).isNull();
+    }
+
+    @Test
+    void shouldRejectVerifyEmailWithInvalidToken() {
+        assertThatThrownBy(() -> authService.verifyEmail("non-existent-token"))
+                .isInstanceOf(InvalidVerificationTokenException.class);
+        assertThatThrownBy(() -> authService.verifyEmail(null))
+                .isInstanceOf(InvalidVerificationTokenException.class);
+        assertThatThrownBy(() -> authService.verifyEmail("   "))
+                .isInstanceOf(InvalidVerificationTokenException.class);
+    }
+
+    @Test
+    void shouldRejectVerifyEmailWithExpiredToken() {
+        UUID accountId = UUID.randomUUID();
+        Account account = new Account(
+                accountId,
+                Email.of("expired_verify_svc@ordago.dev"),
+                PasswordHash.of("hash"),
+                false,
+                false,
+                "expired-token-123",
+                Instant.now().minusSeconds(100),
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                false,
+                null,
+                false,
+                null,
+                null,
+                Instant.now(),
+                Instant.now(),
+                null
+        );
+        accountRepository.save(account);
+
+        assertThatThrownBy(() -> authService.verifyEmail("expired-token-123"))
+                .isInstanceOf(VerificationTokenExpiredException.class);
+    }
+
+    @Test
+    void shouldResendVerificationEmailForUnverifiedAccount() {
+        authService.register(new RegisterUseCase.RegisterCommand(
+                "resend_test@ordago.dev",
+                "Password123!",
+                "ResendUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        sendEmailUseCase.sentEmails.clear();
+
+        authService.resendVerificationEmail("resend_test@ordago.dev", "es");
+
+        assertThat(sendEmailUseCase.sentEmails).hasSize(1);
+        SendEmailCommand emailCmd = sendEmailUseCase.sentEmails.getFirst();
+        assertThat(emailCmd.recipient()).isEqualTo("resend_test@ordago.dev");
+        assertThat(emailCmd.template()).isEqualTo("email-verification");
+    }
+
+    @Test
+    void shouldIgnoreResendVerificationForVerifiedAccount() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "already_verified@ordago.dev",
+                "Password123!",
+                "VerifiedUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        authService.verifyEmail(reg.account().getEmailVerificationToken());
+        sendEmailUseCase.sentEmails.clear();
+
+        authService.resendVerificationEmail("already_verified@ordago.dev", "es");
+
+        assertThat(sendEmailUseCase.sentEmails).isEmpty();
+    }
+
+    @Test
+    void shouldIgnoreResendVerificationForNonExistentEmail() {
+        sendEmailUseCase.sentEmails.clear();
+
+        authService.resendVerificationEmail("unknown_user@ordago.dev", "es");
+
+        assertThat(sendEmailUseCase.sentEmails).isEmpty();
+    }
+
+    @Test
+    void shouldRequestPasswordResetForActiveAccount() {
+        authService.register(new RegisterUseCase.RegisterCommand(
+                "forgot_pw@ordago.dev",
+                "Password123!",
+                "ForgotPwUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        sendEmailUseCase.sentEmails.clear();
+
+        authService.requestPasswordReset("forgot_pw@ordago.dev", "es");
+
+        assertThat(sendEmailUseCase.sentEmails).hasSize(1);
+        SendEmailCommand emailCmd = sendEmailUseCase.sentEmails.getFirst();
+        assertThat(emailCmd.recipient()).isEqualTo("forgot_pw@ordago.dev");
+        assertThat(emailCmd.template()).isEqualTo("password-reset");
+        assertThat(emailCmd.templateData()).containsKey("resetUrl");
+
+        Account account = accountRepository.findByEmail("forgot_pw@ordago.dev").orElseThrow();
+        assertThat(account.getPasswordResetToken()).isNotBlank();
+        assertThat(account.getPasswordResetExpiresAt()).isAfter(Instant.now());
+    }
+
+    @Test
+    void shouldIgnorePasswordResetForNonExistentEmail() {
+        sendEmailUseCase.sentEmails.clear();
+
+        authService.requestPasswordReset("does_not_exist@ordago.dev", "es");
+
+        assertThat(sendEmailUseCase.sentEmails).isEmpty();
+    }
+
+    @Test
+    void shouldIgnorePasswordResetForBannedAccount() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "banned_reset@ordago.dev",
+                "Password123!",
+                "BannedResetUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        Account account = accountRepository.findById(reg.account().getId()).orElseThrow();
+        Account banned = new Account(
+                account.getId(),
+                account.getEmail(),
+                account.getPasswordHash(),
+                account.isSystemAdmin(),
+                account.isEmailVerified(),
+                account.getEmailVerificationToken(),
+                account.getEmailVerificationExpiresAt(),
+                account.getPasswordResetToken(),
+                account.getPasswordResetExpiresAt(),
+                0,
+                null,
+                null,
+                null,
+                false,
+                null,
+                true,
+                Instant.now().plusSeconds(7200),
+                "Suspended",
+                account.getCreatedAt(),
+                account.getUpdatedAt(),
+                null
+        );
+        accountRepository.save(banned);
+        sendEmailUseCase.sentEmails.clear();
+
+        authService.requestPasswordReset("banned_reset@ordago.dev", "es");
+
+        assertThat(sendEmailUseCase.sentEmails).isEmpty();
+    }
+
+    @Test
+    void shouldResetPasswordSuccessfullyAndRevokeActiveSessions() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "reset_test@ordago.dev",
+                "OldPassword123!",
+                "ResetTestUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        authService.requestPasswordReset("reset_test@ordago.dev", "es");
+        Account account = accountRepository.findById(reg.account().getId()).orElseThrow();
+        String resetToken = account.getPasswordResetToken();
+
+        authService.resetPassword(resetToken, "NewSecurePassword456!");
+
+        // Verify old session revoked
+        UserSession session = sessionRepository.findById(reg.session().getId()).orElseThrow();
+        assertThat(session.isRevoked()).isTrue();
+        assertThat(session.getRevocationReason()).isEqualTo("Password reset");
+
+        // Verify login works with new password
+        AuthResult loginResult = authService.login(new LoginUseCase.LoginCommand(
+                "reset_test@ordago.dev",
+                "NewSecurePassword456!",
+                "dev-2",
+                "Phone",
+                "127.0.0.1"
+        ));
+        assertThat(loginResult).isNotNull();
+
+        // Verify login fails with old password
+        assertThatThrownBy(() -> authService.login(new LoginUseCase.LoginCommand(
+                "reset_test@ordago.dev",
+                "OldPassword123!",
+                "dev-3",
+                "Tablet",
+                "127.0.0.1"
+        ))).isInstanceOf(InvalidCredentialsException.class);
+    }
+
+    @Test
+    void shouldRejectResetPasswordWithInvalidToken() {
+        assertThatThrownBy(() -> authService.resetPassword("invalid-token", "NewPass123!"))
+                .isInstanceOf(InvalidPasswordResetTokenException.class);
+        assertThatThrownBy(() -> authService.resetPassword(null, "NewPass123!"))
+                .isInstanceOf(InvalidPasswordResetTokenException.class);
+        assertThatThrownBy(() -> authService.resetPassword("   ", "NewPass123!"))
+                .isInstanceOf(InvalidPasswordResetTokenException.class);
+    }
+
+    @Test
+    void shouldRejectResetPasswordWithExpiredToken() {
+        UUID accountId = UUID.randomUUID();
+        Account account = new Account(
+                accountId,
+                Email.of("expired_pw_reset@ordago.dev"),
+                PasswordHash.of("hash"),
+                false,
+                false,
+                null,
+                null,
+                "expired-reset-token-123",
+                Instant.now().minusSeconds(100),
+                0,
+                null,
+                null,
+                null,
+                false,
+                null,
+                false,
+                null,
+                null,
+                Instant.now(),
+                Instant.now(),
+                null
+        );
+        accountRepository.save(account);
+
+        assertThatThrownBy(() -> authService.resetPassword("expired-reset-token-123", "NewPassword123!"))
+                .isInstanceOf(PasswordResetTokenExpiredException.class);
+    }
+
+    @Test
+    void shouldChangePasswordForAuthenticatedUserAndRevokeSessions() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "change_test@ordago.dev",
+                "CurrentPass123!",
+                "ChangeTestUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        authService.changePassword(reg.account().getId(), "CurrentPass123!", "NewChangedPass456!");
+
+        // Verify session revoked
+        UserSession session = sessionRepository.findById(reg.session().getId()).orElseThrow();
+        assertThat(session.isRevoked()).isTrue();
+        assertThat(session.getRevocationReason()).isEqualTo("Password changed");
+
+        // Verify login with new password succeeds
+        AuthResult loginResult = authService.login(new LoginUseCase.LoginCommand(
+                "change_test@ordago.dev",
+                "NewChangedPass456!",
+                "dev-2",
+                "Phone",
+                "127.0.0.1"
+        ));
+        assertThat(loginResult).isNotNull();
+
+        // Verify login with old password fails
+        assertThatThrownBy(() -> authService.login(new LoginUseCase.LoginCommand(
+                "change_test@ordago.dev",
+                "CurrentPass123!",
+                "dev-3",
+                "Tablet",
+                "127.0.0.1"
+        ))).isInstanceOf(InvalidCredentialsException.class);
+    }
+
+    @Test
+    void shouldRejectChangePasswordWithIncorrectCurrentPassword() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "change_wrong@ordago.dev",
+                "CorrectPass123!",
+                "ChangeWrongUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        assertThatThrownBy(() -> authService.changePassword(
+                reg.account().getId(),
+                "IncorrectPass!",
+                "NewPass123!"
+        )).isInstanceOf(InvalidCredentialsException.class);
+    }
+
     // --- In-Memory Test Doubles ---
 
     private static class InMemoryAccountRepository implements AccountRepositoryPort {
@@ -479,6 +857,20 @@ class AuthServiceTest {
         @Override
         public boolean existsByEmail(String email) {
             return findByEmail(email).isPresent();
+        }
+
+        @Override
+        public Optional<Account> findByEmailVerificationToken(String token) {
+            return accounts.values().stream()
+                    .filter(a -> token != null && token.equals(a.getEmailVerificationToken()))
+                    .findFirst();
+        }
+
+        @Override
+        public Optional<Account> findByPasswordResetToken(String token) {
+            return accounts.values().stream()
+                    .filter(a -> token != null && token.equals(a.getPasswordResetToken()))
+                    .findFirst();
         }
     }
 
@@ -593,6 +985,15 @@ class AuthServiceTest {
             );
             createdProfiles.put(command.accountId(), profile);
             return profile;
+        }
+    }
+
+    private static class StubSendEmailUseCase implements SendEmailUseCase {
+        private final List<SendEmailCommand> sentEmails = new ArrayList<>();
+
+        @Override
+        public void sendEmail(SendEmailCommand command) {
+            sentEmails.add(command);
         }
     }
 }

@@ -13,8 +13,21 @@ public interface RegisterUseCase {
             String tagLine,
             String deviceId,
             String deviceName,
-            String clientIp
-    ) {}
+            String clientIp,
+            String language
+    ) {
+        public RegisterCommand(
+                String email,
+                String password,
+                String gameName,
+                String tagLine,
+                String deviceId,
+                String deviceName,
+                String clientIp
+        ) {
+            this(email, password, gameName, tagLine, deviceId, deviceName, clientIp, "es");
+        }
+    }
 
     record AuthResult(
             Account account,
