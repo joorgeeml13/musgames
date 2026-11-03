@@ -37,6 +37,19 @@ El lobby social y la mesa de juego conviven bajo el mismo origen (`dominio.com`)
 
 - **Lecturas ultra-rápidas:** Entidades de lectura intensiva (perfiles públicos, rankings Elo, configuraciones globales) se sirven desde la memoria local del proceso (L1 Caffeine) sin sobrecarga de red.
 - **Consistencia horizontal:** La sincronización y persistencia compartida entre réplicas del backend se delega a Redis (L2). Ante caídas transitorias de Redis, el sistema degrada elegantemente a computación directa/base de datos sin interrumpir el servicio.
+- **Detalles completos:** Ver [05-two-level-cache.md](file:///home/jorge/.personal/musgames/docs/technical/05-two-level-cache.md).
+
+### D. Transporte Dual de Autenticación (HttpOnly Cookies + Mobile Fallback)
+
+- **Seguridad Web:** Protección de sesiones frente a XSS y CSRF mediante cookies `HttpOnly; SameSite=Strict; Secure` gestionadas de forma transparente por el navegador.
+- **Compatibilidad Móvil y API:** Fallback en el cuerpo de la respuesta (`AuthResponse`, `TokenResponse`) y cabecera estándar `Authorization: Bearer <token>` para clientes móviles y APIs sin soporte de cookies.
+- **Detalles completos:** Ver [06-auth-cookie-transport.md](file:///home/jorge/.personal/musgames/docs/technical/06-auth-cookie-transport.md).
+
+### E. Enrutamiento de Eventos de Dominio (RabbitMQ Topic Exchange)
+
+- **Topic Exchange `ordago.events`:** Publicación desacoplada mediante routing keys jerárquicas (`auth.email.*`, `auth.security.*`, etc.) sin claves estáticas por defecto.
+- **Consumo Selectivo:** Microservicios dedicados (como el servicio de correo `apps/mailer` o el sistema de auditoría antifraude) consumen exclusivamente los eventos de su dominio mediante bindings de patrones.
+- **Detalles completos:** Ver [07-rabbitmq-topic-routing.md](file:///home/jorge/.personal/musgames/docs/technical/07-rabbitmq-topic-routing.md).
 
 ## 3. Flujo de Componentes
 
