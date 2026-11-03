@@ -9,6 +9,7 @@ import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.transaction.Transactional;
+import dev.ordago.auth.domain.event.TokenTheftDetectedEvent;
 import dev.ordago.auth.domain.exception.AccountBannedException;
 import dev.ordago.auth.domain.exception.AccountLockedException;
 import dev.ordago.auth.domain.exception.EmailAlreadyExistsException;
@@ -43,6 +44,7 @@ import dev.ordago.auth.domain.port.out.UserSessionRepositoryPort;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase.SendEmailCommand;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
+import dev.ordago.shared.domain.port.out.EventPublisherPort;
 
 @ApplicationScoped
 public class AuthService implements
@@ -67,6 +69,7 @@ public class AuthService implements
     private final TokenProviderPort tokenProvider;
     private final CreateUserProfileUseCase createUserProfileUseCase;
     private final SendEmailUseCase sendEmailUseCase;
+    private final EventPublisherPort eventPublisherPort;
 
     private final int maxFailedAttempts;
     private final Duration lockDuration;
@@ -81,6 +84,7 @@ public class AuthService implements
             TokenProviderPort tokenProvider,
             CreateUserProfileUseCase createUserProfileUseCase,
             SendEmailUseCase sendEmailUseCase,
+            EventPublisherPort eventPublisherPort,
             @ConfigProperty(name = "ordago.auth.lockout.max-attempts", defaultValue = "5") int maxFailedAttempts,
             @ConfigProperty(name = "ordago.auth.lockout.duration-minutes", defaultValue = "15") int lockDurationMinutes,
             @ConfigProperty(name = "ordago.auth.refresh-token.grace-window-seconds", defaultValue = "30") int graceWindowSeconds,
@@ -93,6 +97,7 @@ public class AuthService implements
         this.tokenProvider = Objects.requireNonNull(tokenProvider, "TokenProviderPort cannot be null");
         this.createUserProfileUseCase = Objects.requireNonNull(createUserProfileUseCase, "CreateUserProfileUseCase cannot be null");
         this.sendEmailUseCase = Objects.requireNonNull(sendEmailUseCase, "SendEmailUseCase cannot be null");
+        this.eventPublisherPort = Objects.requireNonNull(eventPublisherPort, "EventPublisherPort cannot be null");
         this.maxFailedAttempts = maxFailedAttempts;
         this.lockDuration = Duration.ofMinutes(lockDurationMinutes);
         this.graceWindowSeconds = graceWindowSeconds;
@@ -151,7 +156,7 @@ public class AuthService implements
     }
 
     @Override
-    @Transactional
+    @Transactional(dontRollbackOn = InvalidCredentialsException.class)
     public AuthResult login(LoginCommand command) {
         Objects.requireNonNull(command, "LoginCommand cannot be null");
         Email email;
@@ -209,7 +214,7 @@ public class AuthService implements
     }
 
     @Override
-    @Transactional
+    @Transactional(dontRollbackOn = SessionRevokedException.class)
     public AuthTokens refreshToken(RefreshTokenCommand command) {
         Objects.requireNonNull(command, "RefreshTokenCommand cannot be null");
         String incomingTokenHash = tokenProvider.hashToken(command.refreshToken());
@@ -229,6 +234,13 @@ public class AuthService implements
         if (incomingTokenHash.equals(session.getPreviousRefreshTokenHash())) {
             if (!session.isWithinGraceWindow(graceWindowSeconds)) {
                 // Theft detection: previous token used after grace window
+                eventPublisherPort.publish(TokenTheftDetectedEvent.of(
+                        session.getAccountId(),
+                        session.getId(),
+                        session.getDeviceId(),
+                        session.getDeviceName(),
+                        command.clientIp()
+                ));
                 session.revoke("TOKEN_THEFT_DETECTED");
                 userSessionRepository.save(session);
                 throw new SessionRevokedException("auth.token_theft_detected");

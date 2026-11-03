@@ -79,4 +79,14 @@ public record EmailEvent(
     ) {
         return create(recipient, recipient, subject, template, templateData, language);
     }
+
+    @Override
+    public String routingKey() {
+        return switch (template) {
+            case "email-verification" -> "auth.email.verification";
+            case "password-reset" -> "auth.email.password_reset";
+            case "welcome" -> "auth.email.welcome";
+            default -> "notification.email." + template.replace('-', '_');
+        };
+    }
 }

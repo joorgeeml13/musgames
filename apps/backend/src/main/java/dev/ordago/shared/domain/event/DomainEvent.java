@@ -17,4 +17,8 @@ public interface DomainEvent {
     Instant occurredOn();
 
     String aggregateId();
+
+    default String routingKey() {
+        return eventType();
+    }
 }

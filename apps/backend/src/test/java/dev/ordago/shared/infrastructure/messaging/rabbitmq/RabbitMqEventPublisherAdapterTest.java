@@ -1,6 +1,8 @@
 package dev.ordago.shared.infrastructure.messaging.rabbitmq;
 
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -17,6 +19,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import dev.ordago.shared.domain.event.DomainEvent;
 import dev.ordago.shared.domain.event.GenericDomainEvent;
+import io.smallrye.reactive.messaging.rabbitmq.OutgoingRabbitMQMetadata;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -67,6 +70,46 @@ class RabbitMqEventPublisherAdapterTest {
         assertThat(root.get("eventType").asText()).isEqualTo(eventType);
         assertThat(root.get("aggregateId").asText()).isEqualTo(aggregateId);
         assertThat(root.get("occurredOn")).isNotNull();
+
+        assertThat(recordingEmitter.getEmittedRawMessages()).hasSize(1);
+        Message<? extends String> emittedMsg = recordingEmitter.getEmittedRawMessages().getFirst();
+        OutgoingRabbitMQMetadata metadata = emittedMsg.getMetadata(OutgoingRabbitMQMetadata.class).orElseThrow();
+        assertThat(metadata.getRoutingKey()).isEqualTo(eventType);
+        assertThat(metadata.getTimestamp()).isEqualTo(ZonedDateTime.ofInstant(now, ZoneOffset.UTC));
+    }
+
+    @Test
+    @DisplayName("Should publish event with custom dynamic routing key and metadata")
+    void shouldPublishDomainEventWithCustomDynamicRoutingKey() {
+        UUID eventId = UUID.randomUUID();
+        Instant now = Instant.parse("2026-11-03T12:00:00.00Z");
+
+        record CustomTheftEvent(
+                UUID eventId,
+                String eventType,
+                Instant occurredOn,
+                String aggregateId
+        ) implements DomainEvent {
+            @Override
+            public String routingKey() {
+                return "auth.security.theft_detected";
+            }
+        }
+
+        CustomTheftEvent customRoutingKeyEvent = new CustomTheftEvent(
+                eventId,
+                "auth.security.theft_detected",
+                now,
+                "account-uuid-999"
+        );
+
+        adapter.publish(customRoutingKeyEvent);
+
+        assertThat(recordingEmitter.getEmittedRawMessages()).hasSize(1);
+        Message<? extends String> emittedMsg = recordingEmitter.getEmittedRawMessages().getFirst();
+        OutgoingRabbitMQMetadata metadata = emittedMsg.getMetadata(OutgoingRabbitMQMetadata.class).orElseThrow();
+        assertThat(metadata.getRoutingKey()).isEqualTo("auth.security.theft_detected");
+        assertThat(metadata.getTimestamp()).isEqualTo(ZonedDateTime.ofInstant(now, ZoneOffset.UTC));
     }
 
     @Test
@@ -101,6 +144,123 @@ class RabbitMqEventPublisherAdapterTest {
         assertThat(root.get("eventType").asText()).isEqualTo("room.mus.created");
         assertThat(root.get("roomName").asText()).isEqualTo("Mesa de los Reyes");
         assertThat(root.get("maxPlayers").asInt()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("Should sanitize routing key with forbidden characters to underscores")
+    void shouldSanitizeRoutingKeyWithForbiddenCharacters() {
+        record InvalidCharEvent(
+                UUID eventId,
+                String eventType,
+                Instant occurredOn,
+                String aggregateId
+        ) implements DomainEvent {
+            @Override
+            public String routingKey() {
+                return "auth/security:token theft#dangerous!";
+            }
+        }
+
+        InvalidCharEvent event = new InvalidCharEvent(
+                UUID.randomUUID(),
+                "auth.security.theft",
+                Instant.now(),
+                "agg-1"
+        );
+
+        adapter.publish(event);
+
+        assertThat(recordingEmitter.getEmittedRawMessages()).hasSize(1);
+        OutgoingRabbitMQMetadata metadata = recordingEmitter.getEmittedRawMessages().getFirst()
+                .getMetadata(OutgoingRabbitMQMetadata.class).orElseThrow();
+        assertThat(metadata.getRoutingKey()).isEqualTo("auth_security_token_theft_dangerous_");
+    }
+
+    @Test
+    @DisplayName("Should truncate routing key exceeding 255 characters to 255")
+    void shouldTruncateRoutingKeyExceeding255Chars() {
+        record LongKeyEvent(
+                UUID eventId,
+                String eventType,
+                Instant occurredOn,
+                String aggregateId,
+                String customRoutingKey
+        ) implements DomainEvent {
+            @Override
+            public String routingKey() {
+                return customRoutingKey;
+            }
+        }
+
+        LongKeyEvent event = new LongKeyEvent(
+                UUID.randomUUID(),
+                "auth.test",
+                Instant.now(),
+                "agg-1",
+                "a".repeat(300)
+        );
+
+        adapter.publish(event);
+
+        assertThat(recordingEmitter.getEmittedRawMessages()).hasSize(1);
+        OutgoingRabbitMQMetadata metadata = recordingEmitter.getEmittedRawMessages().getFirst()
+                .getMetadata(OutgoingRabbitMQMetadata.class).orElseThrow();
+        assertThat(metadata.getRoutingKey()).hasSize(255).isEqualTo("a".repeat(255));
+    }
+
+    @Test
+    @DisplayName("Should fallback to ordago.event when routingKey and eventType are null or blank")
+    void shouldFallbackToDefaultRoutingKeyWhenBothRoutingKeyAndEventTypeNullOrBlank() {
+        record EmptyEvent(
+                UUID eventId,
+                String eventType,
+                Instant occurredOn,
+                String aggregateId
+        ) implements DomainEvent {
+            @Override
+            public String routingKey() {
+                return "   ";
+            }
+        }
+
+        EmptyEvent event = new EmptyEvent(
+                UUID.randomUUID(),
+                "",
+                Instant.now(),
+                "agg-1"
+        );
+
+        adapter.publish(event);
+
+        assertThat(recordingEmitter.getEmittedRawMessages()).hasSize(1);
+        OutgoingRabbitMQMetadata metadata = recordingEmitter.getEmittedRawMessages().getFirst()
+                .getMetadata(OutgoingRabbitMQMetadata.class).orElseThrow();
+        assertThat(metadata.getRoutingKey()).isEqualTo("ordago.event");
+    }
+
+    @Test
+    @DisplayName("Should fallback to Instant.now() when occurredOn is null without throwing NPE")
+    void shouldSafeguardNullOccurredOnGracefully() {
+        record NullOccurredOnEvent(
+                UUID eventId,
+                String eventType,
+                Instant occurredOn,
+                String aggregateId
+        ) implements DomainEvent {}
+
+        NullOccurredOnEvent event = new NullOccurredOnEvent(
+                UUID.randomUUID(),
+                "auth.event.test",
+                null,
+                "agg-1"
+        );
+
+        adapter.publish(event);
+
+        assertThat(recordingEmitter.getEmittedRawMessages()).hasSize(1);
+        OutgoingRabbitMQMetadata metadata = recordingEmitter.getEmittedRawMessages().getFirst()
+                .getMetadata(OutgoingRabbitMQMetadata.class).orElseThrow();
+        assertThat(metadata.getTimestamp()).isNotNull();
     }
 
     @Test
@@ -175,11 +335,12 @@ class RabbitMqEventPublisherAdapterTest {
     }
 
     /**
-     * Test double implementation of {@link Emitter} that records sent strings.
+     * Test double implementation of {@link Emitter} that records sent strings and messages.
      */
     private static final class RecordingEmitter implements Emitter<String> {
 
         private final List<String> emittedMessages = new ArrayList<>();
+        private final List<Message<? extends String>> emittedRawMessages = new ArrayList<>();
         private RuntimeException synchronousFailure;
         private Throwable asynchronousFailure;
 
@@ -193,6 +354,10 @@ class RabbitMqEventPublisherAdapterTest {
 
         List<String> getEmittedMessages() {
             return Collections.unmodifiableList(emittedMessages);
+        }
+
+        List<Message<? extends String>> getEmittedRawMessages() {
+            return Collections.unmodifiableList(emittedRawMessages);
         }
 
         @Override
@@ -209,7 +374,16 @@ class RabbitMqEventPublisherAdapterTest {
 
         @Override
         public <M extends Message<? extends String>> void send(M msg) {
-            throw new UnsupportedOperationException("Not implemented for test double");
+            if (synchronousFailure != null) {
+                throw synchronousFailure;
+            }
+            emittedRawMessages.add(msg);
+            emittedMessages.add(msg.getPayload());
+            if (asynchronousFailure != null) {
+                msg.nack(asynchronousFailure);
+            } else {
+                msg.ack();
+            }
         }
 
         @Override

@@ -1,18 +1,26 @@
 package dev.ordago.shared.infrastructure.messaging.rabbitmq;
 
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
+import org.eclipse.microprofile.reactive.messaging.Message;
+import org.eclipse.microprofile.reactive.messaging.Metadata;
 import org.jboss.logging.Logger;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.ordago.shared.domain.event.DomainEvent;
 import dev.ordago.shared.domain.port.out.EventPublisherPort;
+import io.smallrye.reactive.messaging.rabbitmq.OutgoingRabbitMQMetadata;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 /**
  * RabbitMQ adapter implementing {@link EventPublisherPort}.
- * Serializes {@link DomainEvent} to JSON and dispatches to the 'ordago-events-out' channel.
+ * Serializes {@link DomainEvent} to JSON and dispatches to the 'ordago-events-out' channel
+ * with dynamic topic exchange routing keys and message metadata.
  */
 @ApplicationScoped
 public class RabbitMqEventPublisherAdapter implements EventPublisherPort {
@@ -41,29 +49,40 @@ public class RabbitMqEventPublisherAdapter implements EventPublisherPort {
 
         try {
             String payload = objectMapper.writeValueAsString(event);
-            emitter.send(payload).whenComplete((success, failure) -> {
-                if (failure != null) {
-                    LOG.errorf(
-                            failure,
-                            "Failed to deliver domain event to RabbitMQ [eventId=%s, eventType=%s, aggregateId=%s]",
-                            event.eventId(),
-                            event.eventType(),
-                            event.aggregateId()
-                    );
-                } else {
-                    LOG.debugf(
-                            "Domain event successfully acknowledged by RabbitMQ [eventId=%s, eventType=%s, aggregateId=%s]",
-                            event.eventId(),
-                            event.eventType(),
-                            event.aggregateId()
-                    );
-                }
-            });
+            String rawRoutingKey = event.routingKey();
+            if (rawRoutingKey == null || rawRoutingKey.isBlank()) {
+                rawRoutingKey = (event.eventType() != null && !event.eventType().isBlank())
+                        ? event.eventType()
+                        : "ordago.event";
+            }
+            rawRoutingKey = rawRoutingKey.trim().replaceAll("[^a-zA-Z0-9_.-]", "_");
+            if (rawRoutingKey.length() > 255) {
+                rawRoutingKey = rawRoutingKey.substring(0, 255);
+            }
+            String routingKey = rawRoutingKey;
+
+            Instant occurredOn = event.occurredOn() != null ? event.occurredOn() : Instant.now();
+            OutgoingRabbitMQMetadata rabbitMetadata = new OutgoingRabbitMQMetadata.Builder()
+                    .withRoutingKey(routingKey)
+                    .withTimestamp(ZonedDateTime.ofInstant(occurredOn, ZoneOffset.UTC))
+                    .build();
+
+            Message<String> message = Message.of(payload, Metadata.of(rabbitMetadata))
+                    .withAck(() -> {
+                        LOG.debugf("Domain event acknowledged by RabbitMQ [eventId=%s, routingKey=%s]", event.eventId(), routingKey);
+                        return CompletableFuture.completedFuture(null);
+                    })
+                    .withNack(throwable -> {
+                        LOG.errorf(throwable, "Failed to deliver domain event to RabbitMQ [eventId=%s, routingKey=%s]", event.eventId(), routingKey);
+                        return CompletableFuture.completedFuture(null);
+                    });
+
+            emitter.send(message);
             LOG.debugf(
-                    "Emitted domain event to channel '%s' [eventId=%s, eventType=%s, aggregateId=%s]",
+                    "Emitted domain event to channel '%s' [eventId=%s, routingKey=%s, aggregateId=%s]",
                     CHANNEL_NAME,
                     event.eventId(),
-                    event.eventType(),
+                    routingKey,
                     event.aggregateId()
             );
         } catch (Exception e) {

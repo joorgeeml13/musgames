@@ -9,8 +9,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import dev.ordago.auth.domain.event.TokenTheftDetectedEvent;
 import dev.ordago.auth.domain.exception.AccountBannedException;
 import dev.ordago.auth.domain.exception.AccountLockedException;
 import dev.ordago.auth.domain.exception.EmailAlreadyExistsException;
@@ -42,6 +44,8 @@ import dev.ordago.profile.domain.exception.PlayerTagAlreadyTakenException;
 import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
+import dev.ordago.shared.domain.event.DomainEvent;
+import dev.ordago.shared.domain.port.out.EventPublisherPort;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -54,6 +58,7 @@ class AuthServiceTest {
     private StubTokenProvider tokenProvider;
     private StubCreateUserProfileUseCase createUserProfileUseCase;
     private StubSendEmailUseCase sendEmailUseCase;
+    private StubEventPublisherPort eventPublisherPort;
 
     @BeforeEach
     void setUp() {
@@ -63,6 +68,7 @@ class AuthServiceTest {
         tokenProvider = new StubTokenProvider();
         createUserProfileUseCase = new StubCreateUserProfileUseCase();
         sendEmailUseCase = new StubSendEmailUseCase();
+        eventPublisherPort = new StubEventPublisherPort();
 
         authService = new AuthService(
                 accountRepository,
@@ -71,6 +77,7 @@ class AuthServiceTest {
                 tokenProvider,
                 createUserProfileUseCase,
                 sendEmailUseCase,
+                eventPublisherPort,
                 5,
                 15,
                 30,
@@ -439,6 +446,8 @@ class AuthServiceTest {
         session.setLastRefreshedAt(Instant.now().minusSeconds(31));
         sessionRepository.save(session);
 
+        eventPublisherPort.publishedEvents.clear();
+
         // Attacker presents the old stolen token after grace window
         assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(stolenToken, "attacker-ip")))
                 .isInstanceOf(SessionRevokedException.class);
@@ -447,6 +456,83 @@ class AuthServiceTest {
         UserSession revokedSession = sessionRepository.findById(reg.session().getId()).orElseThrow();
         assertThat(revokedSession.isRevoked()).isTrue();
         assertThat(revokedSession.getRevocationReason()).isEqualTo("TOKEN_THEFT_DETECTED");
+
+        // Token theft domain event must be published
+        assertThat(eventPublisherPort.publishedEvents).hasSize(1);
+        DomainEvent published = eventPublisherPort.publishedEvents.getFirst();
+        assertThat(published).isInstanceOf(TokenTheftDetectedEvent.class);
+        TokenTheftDetectedEvent theftEvent = (TokenTheftDetectedEvent) published;
+        assertThat(theftEvent.accountId()).isEqualTo(reg.account().getId());
+        assertThat(theftEvent.sessionId()).isEqualTo(reg.session().getId());
+        assertThat(theftEvent.deviceId()).isEqualTo("dev-1");
+        assertThat(theftEvent.deviceName()).isEqualTo("PC");
+        assertThat(theftEvent.clientIp()).isEqualTo("attacker-ip");
+        assertThat(theftEvent.routingKey()).isEqualTo("auth.security.theft_detected");
+        assertThat(theftEvent.eventType()).isEqualTo("auth.security.theft_detected");
+        assertThat(theftEvent.aggregateId()).isEqualTo(reg.account().getId().toString());
+    }
+
+    @Test
+    void shouldEmitTokenTheftEventBeforeSessionRevocationIsPersisted() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "order_test@ordago.dev",
+                "Password!",
+                "OrderUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        String stolenToken = reg.tokens().refreshToken();
+        authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(stolenToken, "127.0.0.1"));
+
+        UserSession session = sessionRepository.findById(reg.session().getId()).orElseThrow();
+        session.setLastRefreshedAt(Instant.now().minusSeconds(31));
+        sessionRepository.save(session);
+
+        // Track session revocation status at the moment publish is invoked
+        List<Boolean> sessionRevokedAtPublishTime = new ArrayList<>();
+        EventPublisherPort orderingPublisher = event -> {
+            UserSession currentInRepo = sessionRepository.findById(reg.session().getId()).orElseThrow();
+            sessionRevokedAtPublishTime.add(currentInRepo.isRevoked());
+        };
+
+        AuthService orderTestService = new AuthService(
+                accountRepository,
+                sessionRepository,
+                passwordEncoder,
+                tokenProvider,
+                createUserProfileUseCase,
+                sendEmailUseCase,
+                orderingPublisher,
+                5,
+                15,
+                30,
+                24,
+                60
+        );
+
+        assertThatThrownBy(() -> orderTestService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(stolenToken, "attacker-ip")))
+                .isInstanceOf(SessionRevokedException.class);
+
+        assertThat(sessionRevokedAtPublishTime).containsExactly(false);
+        assertThat(sessionRepository.findById(reg.session().getId()).orElseThrow().isRevoked()).isTrue();
+    }
+
+    @Test
+    void shouldHaveDontRollbackOnConfiguredOnTransactionalMethods() throws Exception {
+        Transactional loginTx = AuthService.class
+                .getMethod("login", LoginUseCase.LoginCommand.class)
+                .getAnnotation(Transactional.class);
+        assertThat(loginTx).isNotNull();
+        assertThat(loginTx.dontRollbackOn()).contains(InvalidCredentialsException.class);
+
+        Transactional refreshTx = AuthService.class
+                .getMethod("refreshToken", RefreshTokenUseCase.RefreshTokenCommand.class)
+                .getAnnotation(Transactional.class);
+        assertThat(refreshTx).isNotNull();
+        assertThat(refreshTx.dontRollbackOn()).contains(SessionRevokedException.class);
     }
 
     @Test
@@ -994,6 +1080,15 @@ class AuthServiceTest {
         @Override
         public void sendEmail(SendEmailCommand command) {
             sentEmails.add(command);
+        }
+    }
+
+    private static class StubEventPublisherPort implements EventPublisherPort {
+        private final List<DomainEvent> publishedEvents = new ArrayList<>();
+
+        @Override
+        public void publish(DomainEvent event) {
+            publishedEvents.add(event);
         }
     }
 }

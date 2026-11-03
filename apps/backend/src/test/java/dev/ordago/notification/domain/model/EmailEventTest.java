@@ -30,6 +30,7 @@ class EmailEventTest {
         assertThat(event).isInstanceOf(DomainEvent.class);
         assertThat(event.eventId()).isNotNull();
         assertThat(event.eventType()).isEqualTo(EmailEvent.DEFAULT_EVENT_TYPE);
+        assertThat(event.routingKey()).isEqualTo("auth.email.welcome");
         assertThat(event.occurredOn()).isNotNull();
         assertThat(event.aggregateId()).isEqualTo(recipient);
         assertThat(event.recipient()).isEqualTo(recipient);
@@ -57,6 +58,38 @@ class EmailEventTest {
         assertThat(event.aggregateId()).isEqualTo("acc-12345");
         assertThat(event.recipient()).isEqualTo(recipient);
         assertThat(event.language()).isEqualTo("en");
+        assertThat(event.routingKey()).isEqualTo("auth.email.password_reset");
+    }
+
+    @Test
+    @DisplayName("Should route email verification template to auth.email.verification")
+    void shouldRouteEmailVerificationTemplate() {
+        EmailEvent event = EmailEvent.create("user@domain.com", "Verify email", "email-verification", Map.of(), "es");
+        assertThat(event.routingKey()).isEqualTo("auth.email.verification");
+    }
+
+    @Test
+    @DisplayName("Should route password reset template to auth.email.password_reset")
+    void shouldRoutePasswordResetTemplate() {
+        EmailEvent event = EmailEvent.create("user@domain.com", "Reset password", "password-reset", Map.of(), "es");
+        assertThat(event.routingKey()).isEqualTo("auth.email.password_reset");
+    }
+
+    @Test
+    @DisplayName("Should route welcome template to auth.email.welcome")
+    void shouldRouteWelcomeTemplate() {
+        EmailEvent event = EmailEvent.create("user@domain.com", "Welcome", "welcome", Map.of(), "es");
+        assertThat(event.routingKey()).isEqualTo("auth.email.welcome");
+    }
+
+    @Test
+    @DisplayName("Should route generic or custom template to notification.email.<normalized_template>")
+    void shouldRouteGenericAndCustomTemplates() {
+        EmailEvent genericEvent = EmailEvent.create("user@domain.com", "Generic Notice", "generic", Map.of(), "es");
+        assertThat(genericEvent.routingKey()).isEqualTo("notification.email.generic");
+
+        EmailEvent customHyphenEvent = EmailEvent.create("user@domain.com", "Custom Alert", "device-security-alert", Map.of(), "es");
+        assertThat(customHyphenEvent.routingKey()).isEqualTo("notification.email.device_security_alert");
     }
 
     @Test
