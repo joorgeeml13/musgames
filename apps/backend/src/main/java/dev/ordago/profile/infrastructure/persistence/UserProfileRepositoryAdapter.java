@@ -65,4 +65,9 @@ public class UserProfileRepositoryAdapter implements UserProfileRepositoryPort {
     public boolean existsById(UUID id) {
         return panacheRepository.count("id", id) > 0;
     }
+
+    @Override
+    public String calculateAvailableTagLine(String gameName) {
+        return panacheRepository.calculateAvailableTagLine(gameName);
+    }
 }

@@ -8,7 +8,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +43,9 @@ import dev.ordago.auth.domain.port.out.TokenProviderPort;
 import dev.ordago.auth.domain.port.out.UserSessionRepositoryPort;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase.SendEmailCommand;
+import dev.ordago.profile.domain.exception.InvalidPlayerTagException;
 import dev.ordago.profile.domain.exception.PlayerTagAlreadyTakenException;
+import dev.ordago.profile.domain.exception.PlayerTagCapacityExceededException;
 import dev.ordago.profile.domain.exception.UserProfileNotFoundException;
 import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
@@ -111,6 +116,112 @@ class AuthServiceTest {
         assertThat(result.tokens().refreshToken()).isNotNull();
         assertThat(createUserProfileUseCase.createdProfiles).containsKey(result.account().getId());
         assertThat(sessionRepository.sessions).containsKey(result.session().getId());
+    }
+
+    @Test
+    void shouldRegisterWithNullTagLineAndGenerateDefaultTagLine() {
+        RegisterUseCase.RegisterCommand cmd = new RegisterUseCase.RegisterCommand(
+                "autotag@ordago.dev",
+                "Password123!",
+                "AutoMusero",
+                null,
+                "device-1",
+                "Chrome Desktop",
+                "127.0.0.1"
+        );
+
+        RegisterUseCase.AuthResult result = authService.register(cmd);
+
+        assertThat(result).isNotNull();
+        UserProfile profile = createUserProfileUseCase.createdProfiles.get(result.account().getId());
+        assertThat(profile).isNotNull();
+        assertThat(profile.getTagLine()).isNotBlank().matches("^[0-9]{4,5}$");
+    }
+
+    @Test
+    void shouldRegisterWithBlankTagLineAndGenerateDefaultTagLine() {
+        RegisterUseCase.RegisterCommand cmd = new RegisterUseCase.RegisterCommand(
+                "blanktag@ordago.dev",
+                "Password123!",
+                "AutoMuseroBlank",
+                "   ",
+                "device-1",
+                "Chrome Desktop",
+                "127.0.0.1"
+        );
+
+        RegisterUseCase.AuthResult result = authService.register(cmd);
+
+        assertThat(result).isNotNull();
+        UserProfile profile = createUserProfileUseCase.createdProfiles.get(result.account().getId());
+        assertThat(profile).isNotNull();
+        assertThat(profile.getTagLine()).isNotBlank().matches("^[0-9]{4,5}$");
+    }
+
+    @Test
+    void shouldFailFastWhenRegisteringWithNullOrInvalidGameName() {
+        RegisterUseCase.RegisterCommand nullGameNameCmd = new RegisterUseCase.RegisterCommand(
+                "invalidname@ordago.dev",
+                "Password123!",
+                null,
+                "01",
+                "device-1",
+                "Chrome Desktop",
+                "127.0.0.1"
+        );
+        assertThatThrownBy(() -> authService.register(nullGameNameCmd))
+                .isInstanceOf(InvalidPlayerTagException.class)
+                .satisfies(ex -> assertThat(((InvalidPlayerTagException) ex).getDetails())
+                        .contains("Game name must not be null"));
+
+        RegisterUseCase.RegisterCommand shortGameNameCmd = new RegisterUseCase.RegisterCommand(
+                "invalidname@ordago.dev",
+                "Password123!",
+                "A",
+                "01",
+                "device-1",
+                "Chrome Desktop",
+                "127.0.0.1"
+        );
+        assertThatThrownBy(() -> authService.register(shortGameNameCmd))
+                .isInstanceOf(InvalidPlayerTagException.class)
+                .satisfies(ex -> assertThat(((InvalidPlayerTagException) ex).getDetails())
+                        .contains("Game name must be 2-24 characters containing only alphanumeric characters, spaces, hyphens, and underscores"));
+
+        // Fail-fast verification: no account was persisted
+        assertThat(accountRepository.findByEmail("invalidname@ordago.dev")).isEmpty();
+    }
+
+    @Test
+    void shouldRegisterMultipleUsersWithSameGameNameAndNoTagLineWithoutCollision() {
+        RegisterUseCase.RegisterCommand cmd1 = new RegisterUseCase.RegisterCommand(
+                "user1@ordago.dev",
+                "Password123!",
+                "SharedName",
+                null,
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        );
+        RegisterUseCase.RegisterCommand cmd2 = new RegisterUseCase.RegisterCommand(
+                "user2@ordago.dev",
+                "Password123!",
+                "SharedName",
+                null,
+                "dev-2",
+                "PC",
+                "127.0.0.1"
+        );
+
+        RegisterUseCase.AuthResult result1 = authService.register(cmd1);
+        RegisterUseCase.AuthResult result2 = authService.register(cmd2);
+
+        UserProfile profile1 = createUserProfileUseCase.createdProfiles.get(result1.account().getId());
+        UserProfile profile2 = createUserProfileUseCase.createdProfiles.get(result2.account().getId());
+
+        assertThat(profile1).isNotNull();
+        assertThat(profile2).isNotNull();
+        assertThat(profile1.getTagLine()).isNotEqualTo(profile2.getTagLine());
     }
 
     @Test
@@ -1385,13 +1496,62 @@ class AuthServiceTest {
         private final Map<UUID, UserProfile> createdProfiles = new HashMap<>();
 
         @Override
+        public String calculateAvailableTagLine(String gameName) {
+            String canonicalGameName = (gameName != null ? gameName.trim() : "").toLowerCase(Locale.ROOT);
+            Set<String> taken = createdProfiles.values().stream()
+                    .filter(p -> p.getGameName().trim().toLowerCase(Locale.ROOT).equals(canonicalGameName))
+                    .map(p -> p.getTagLine().trim().toLowerCase(Locale.ROOT))
+                    .collect(Collectors.toSet());
+
+            for (int i = 0; i < 50; i++) {
+                int candidate = ThreadLocalRandom.current().nextInt(1000, 10000);
+                String tag = String.valueOf(candidate);
+                if (!taken.contains(tag)) {
+                    return tag;
+                }
+            }
+
+            int offset4 = ThreadLocalRandom.current().nextInt(0, 9000);
+            for (int i = 0; i < 9000; i++) {
+                int candidate = 1000 + ((offset4 + i) % 9000);
+                String tag = String.valueOf(candidate);
+                if (!taken.contains(tag)) {
+                    return tag;
+                }
+            }
+
+            for (int i = 0; i < 50; i++) {
+                int candidate = ThreadLocalRandom.current().nextInt(10000, 100000);
+                String tag = String.valueOf(candidate);
+                if (!taken.contains(tag)) {
+                    return tag;
+                }
+            }
+
+            int offset5 = ThreadLocalRandom.current().nextInt(0, 90000);
+            for (int i = 0; i < 90000; i++) {
+                int candidate = 10000 + ((offset5 + i) % 90000);
+                String tag = String.valueOf(candidate);
+                if (!taken.contains(tag)) {
+                    return tag;
+                }
+            }
+
+            throw new PlayerTagCapacityExceededException(gameName);
+        }
+
+        @Override
         public UserProfile createUserProfile(CreateProfileCommand command) {
-            PlayerTag playerTag = new PlayerTag(command.gameName(), command.tagLine());
+            String tagLine = command.tagLine();
+            if (tagLine == null || tagLine.isBlank()) {
+                tagLine = calculateAvailableTagLine(command.gameName());
+            }
+            PlayerTag playerTag = new PlayerTag(command.gameName(), tagLine);
             boolean alreadyExists = createdProfiles.values().stream()
                     .anyMatch(p -> p.getGameName().equalsIgnoreCase(playerTag.canonicalGameName())
                             && p.getTagLine().equalsIgnoreCase(playerTag.canonicalTagLine()));
             if (alreadyExists) {
-                throw new PlayerTagAlreadyTakenException(command.gameName(), command.tagLine());
+                throw new PlayerTagAlreadyTakenException(command.gameName(), tagLine);
             }
 
             UserProfile profile = UserProfile.createDefault(

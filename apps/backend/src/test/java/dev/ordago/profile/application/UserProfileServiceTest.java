@@ -4,11 +4,16 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import dev.ordago.profile.domain.exception.PlayerTagAlreadyTakenException;
+import dev.ordago.profile.domain.exception.PlayerTagCapacityExceededException;
 import dev.ordago.profile.domain.exception.UserProfileNotFoundException;
+import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
 import dev.ordago.profile.domain.port.in.UpdateUserProfileUseCase;
@@ -157,6 +162,86 @@ class UserProfileServiceTest {
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> profileService.updateProfile(null))
                 .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> profileService.calculateAvailableTagLine(null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void shouldAssignAvailableTagLineWhenTagLineIsNull() {
+        UUID accountId = UUID.randomUUID();
+        CreateUserProfileUseCase.CreateProfileCommand cmd = new CreateUserProfileUseCase.CreateProfileCommand(
+                accountId,
+                "AutoMusero",
+                null,
+                "es-ES"
+        );
+
+        UserProfile profile = profileService.createUserProfile(cmd);
+
+        assertThat(profile).isNotNull();
+        assertThat(profile.getTagLine()).isNotBlank().matches("^[0-9]{4,5}$");
+        assertThat(profile.getGameName()).isEqualTo("AutoMusero");
+    }
+
+    @Test
+    void shouldAssignAvailableTagLineWhenTagLineIsBlank() {
+        UUID accountId = UUID.randomUUID();
+        CreateUserProfileUseCase.CreateProfileCommand cmd = new CreateUserProfileUseCase.CreateProfileCommand(
+                accountId,
+                "AutoMuseroBlank",
+                "   ",
+                "es-ES"
+        );
+
+        UserProfile profile = profileService.createUserProfile(cmd);
+
+        assertThat(profile).isNotNull();
+        assertThat(profile.getTagLine()).isNotBlank().matches("^[0-9]{4,5}$");
+    }
+
+    @Test
+    void shouldCalculateAvailableTagLineAvoidingTakenTags() {
+        String gameName = "PopularPlayer";
+        // Pre-populate some tags
+        profileRepository.save(UserProfile.createDefault(UUID.randomUUID(), new PlayerTag(gameName, "1111"), "es-ES"));
+        profileRepository.save(UserProfile.createDefault(UUID.randomUUID(), new PlayerTag(gameName, "2222"), "es-ES"));
+
+        String tagLine = profileService.calculateAvailableTagLine(gameName);
+
+        assertThat(tagLine).isNotNull();
+        assertThat(tagLine).isNotEqualTo("1111");
+        assertThat(tagLine).isNotEqualTo("2222");
+        assertThat(tagLine).matches("^[0-9]{4,5}$");
+    }
+
+    @Test
+    void shouldFallbackToFiveDigitsWhenAllFourDigitsTaken() {
+        String gameName = "CrowdedPlayer";
+        // Fill all 9000 4-digit tags (1000 to 9999)
+        for (int i = 1000; i <= 9999; i++) {
+            profileRepository.save(UserProfile.createDefault(UUID.randomUUID(), new PlayerTag(gameName, String.valueOf(i)), "es-ES"));
+        }
+
+        String tagLine = profileService.calculateAvailableTagLine(gameName);
+
+        assertThat(tagLine).isNotNull();
+        int tagValue = Integer.parseInt(tagLine);
+        assertThat(tagValue).isBetween(10000, 99999);
+    }
+
+    @Test
+    void shouldThrowPlayerTagCapacityExceededExceptionWhenCapacityExhausted() {
+        UserProfileRepositoryPort fullRepo = new InMemoryUserProfileRepository() {
+            @Override
+            public String calculateAvailableTagLine(String gameName) {
+                throw new PlayerTagCapacityExceededException(gameName);
+            }
+        };
+        UserProfileService serviceWithFullRepo = new UserProfileService(fullRepo);
+
+        assertThatThrownBy(() -> serviceWithFullRepo.calculateAvailableTagLine("MaxedUser"))
+                .isInstanceOf(PlayerTagCapacityExceededException.class)
+                .hasMessage("profile.player_tag_capacity_exceeded");
     }
 
     private static class InMemoryUserProfileRepository implements UserProfileRepositoryPort {
@@ -189,6 +274,51 @@ class UserProfileServiceTest {
         @Override
         public boolean existsById(UUID id) {
             return store.containsKey(id);
+        }
+
+        @Override
+        public String calculateAvailableTagLine(String gameName) {
+            String canonicalGameName = (gameName != null ? gameName.trim() : "").toLowerCase(Locale.ROOT);
+            Set<String> taken = store.values().stream()
+                    .filter(p -> p.getGameName().trim().toLowerCase(Locale.ROOT).equals(canonicalGameName))
+                    .map(p -> p.getTagLine().trim().toLowerCase(Locale.ROOT))
+                    .collect(Collectors.toSet());
+
+            for (int i = 0; i < 50; i++) {
+                int candidate = ThreadLocalRandom.current().nextInt(1000, 10000);
+                String tag = String.valueOf(candidate);
+                if (!taken.contains(tag)) {
+                    return tag;
+                }
+            }
+
+            int offset4 = ThreadLocalRandom.current().nextInt(0, 9000);
+            for (int i = 0; i < 9000; i++) {
+                int candidate = 1000 + ((offset4 + i) % 9000);
+                String tag = String.valueOf(candidate);
+                if (!taken.contains(tag)) {
+                    return tag;
+                }
+            }
+
+            for (int i = 0; i < 50; i++) {
+                int candidate = ThreadLocalRandom.current().nextInt(10000, 100000);
+                String tag = String.valueOf(candidate);
+                if (!taken.contains(tag)) {
+                    return tag;
+                }
+            }
+
+            int offset5 = ThreadLocalRandom.current().nextInt(0, 90000);
+            for (int i = 0; i < 90000; i++) {
+                int candidate = 10000 + ((offset5 + i) % 90000);
+                String tag = String.valueOf(candidate);
+                if (!taken.contains(tag)) {
+                    return tag;
+                }
+            }
+
+            throw new PlayerTagCapacityExceededException(gameName);
         }
     }
 }

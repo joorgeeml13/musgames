@@ -88,4 +88,34 @@ class PlayerTagTest {
         assertThatThrownBy(() -> new PlayerTag("ValidName", "   "))
                 .isInstanceOf(InvalidPlayerTagException.class);
     }
+
+    @Test
+    void shouldValidateGameNameSuccessfully() {
+        PlayerTag.validateGameName("ValidPlayer");
+        PlayerTag.validateGameName("Player-123_4");
+        PlayerTag.validateGameName("  SpacedName  ");
+    }
+
+    @Test
+    void shouldRejectNullOrInvalidGameNameInStaticValidator() {
+        assertThatThrownBy(() -> PlayerTag.validateGameName(null))
+                .isInstanceOf(InvalidPlayerTagException.class)
+                .satisfies(ex -> assertThat(((InvalidPlayerTagException) ex).getDetails())
+                        .contains("Game name must not be null"));
+
+        assertThatThrownBy(() -> PlayerTag.validateGameName("A"))
+                .isInstanceOf(InvalidPlayerTagException.class)
+                .satisfies(ex -> assertThat(((InvalidPlayerTagException) ex).getDetails())
+                        .contains("Game name must be 2-24 characters containing only alphanumeric characters, spaces, hyphens, and underscores"));
+
+        assertThatThrownBy(() -> PlayerTag.validateGameName("A".repeat(25)))
+                .isInstanceOf(InvalidPlayerTagException.class)
+                .satisfies(ex -> assertThat(((InvalidPlayerTagException) ex).getDetails())
+                        .contains("Game name must be 2-24 characters containing only alphanumeric characters, spaces, hyphens, and underscores"));
+
+        assertThatThrownBy(() -> PlayerTag.validateGameName("Invalid#Tag"))
+                .isInstanceOf(InvalidPlayerTagException.class)
+                .satisfies(ex -> assertThat(((InvalidPlayerTagException) ex).getDetails())
+                        .contains("Game name must be 2-24 characters containing only alphanumeric characters, spaces, hyphens, and underscores"));
+    }
 }

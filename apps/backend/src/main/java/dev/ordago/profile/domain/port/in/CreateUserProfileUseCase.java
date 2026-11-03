@@ -13,4 +13,6 @@ public interface CreateUserProfileUseCase {
     ) {}
 
     UserProfile createUserProfile(CreateProfileCommand command);
+
+    String calculateAvailableTagLine(String gameName);
 }

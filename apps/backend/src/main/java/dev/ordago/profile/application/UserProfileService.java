@@ -26,7 +26,11 @@ public class UserProfileService implements CreateUserProfileUseCase, GetUserProf
     @Transactional
     public UserProfile createUserProfile(CreateProfileCommand command) {
         Objects.requireNonNull(command, "CreateProfileCommand cannot be null");
-        PlayerTag playerTag = new PlayerTag(command.gameName(), command.tagLine());
+        String resolvedTagLine = command.tagLine();
+        if (resolvedTagLine == null || resolvedTagLine.isBlank()) {
+            resolvedTagLine = calculateAvailableTagLine(command.gameName());
+        }
+        PlayerTag playerTag = new PlayerTag(command.gameName(), resolvedTagLine);
 
         if (userProfileRepository.existsByPlayerTag(playerTag.gameName(), playerTag.tagLine())) {
             throw new PlayerTagAlreadyTakenException(playerTag.gameName(), playerTag.tagLine());
@@ -39,6 +43,13 @@ public class UserProfileService implements CreateUserProfileUseCase, GetUserProf
         );
 
         return userProfileRepository.save(userProfile);
+    }
+
+    @Override
+    @Transactional
+    public String calculateAvailableTagLine(String gameName) {
+        Objects.requireNonNull(gameName, "gameName cannot be null");
+        return userProfileRepository.calculateAvailableTagLine(gameName);
     }
 
     @Override

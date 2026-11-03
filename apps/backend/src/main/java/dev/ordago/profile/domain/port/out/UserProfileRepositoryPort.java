@@ -15,4 +15,6 @@ public interface UserProfileRepositoryPort {
     boolean existsByPlayerTag(String gameName, String tagLine);
 
     boolean existsById(UUID id);
+
+    String calculateAvailableTagLine(String gameName);
 }

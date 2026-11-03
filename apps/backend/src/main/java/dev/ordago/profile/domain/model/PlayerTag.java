@@ -11,20 +11,28 @@ public record PlayerTag(String gameName, String tagLine) {
     private static final Pattern TAG_LINE_PATTERN = Pattern.compile("^[a-zA-Z0-9]{1,6}$");
 
     public PlayerTag {
-        if (gameName == null || tagLine == null) {
-            throw new InvalidPlayerTagException("Game name and tag line must not be null");
+        validateGameName(gameName);
+        if (tagLine == null) {
+            throw new InvalidPlayerTagException("Tag line must not be null");
         }
         String trimmedGameName = gameName.trim();
         String trimmedTagLine = tagLine.trim();
 
-        if (trimmedGameName.length() < 2 || trimmedGameName.length() > 24 || !GAME_NAME_PATTERN.matcher(trimmedGameName).matches()) {
-            throw new InvalidPlayerTagException("Game name must be 2-24 characters containing only alphanumeric characters, spaces, hyphens, and underscores");
-        }
         if (trimmedTagLine.isEmpty() || trimmedTagLine.length() > 6 || !TAG_LINE_PATTERN.matcher(trimmedTagLine).matches()) {
             throw new InvalidPlayerTagException("Tag line must be 1-6 alphanumeric characters");
         }
         gameName = trimmedGameName;
         tagLine = trimmedTagLine;
+    }
+
+    public static void validateGameName(String gameName) {
+        if (gameName == null) {
+            throw new InvalidPlayerTagException("Game name must not be null");
+        }
+        String trimmed = gameName.trim();
+        if (trimmed.length() < 2 || trimmed.length() > 24 || !GAME_NAME_PATTERN.matcher(trimmed).matches()) {
+            throw new InvalidPlayerTagException("Game name must be 2-24 characters containing only alphanumeric characters, spaces, hyphens, and underscores");
+        }
     }
 
     public static PlayerTag of(String gameName, String tagLine) {

@@ -1,6 +1,7 @@
 package dev.ordago.auth.infrastructure.api;
 
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import jakarta.inject.Inject;
@@ -36,6 +37,8 @@ class AuthResourceIT {
     private static String accessToken;
     private static String refreshToken;
     private static String previousRefreshToken;
+    private static String autoAssignedTagLine1;
+    private static String autoAssignedTagLine2;
 
     private JsonNode decodeJwtPayload(String token) {
         assertThat(token).as("JWT token must not be null or blank").isNotBlank();
@@ -543,5 +546,203 @@ class AuthResourceIT {
                 .post("/api/v1/auth/login")
                 .then()
                 .statusCode(200);
+    }
+
+    @Test
+    @Order(22)
+    void shouldRegisterSuccessfullyWhenTagLineIsOmittedAndAutoAssignFourDigitNumericTag() {
+        // Arrange: payload with tagLine omitted completely
+        Map<String, Object> registerPayload = Map.of(
+                "email", "autotag1@ordago.dev",
+                "password", "AutoTagPassword123!",
+                "gameName", "AutoTagPlayer",
+                "deviceId", "device-autotag-1",
+                "deviceName", "Chrome AutoTag 1"
+        );
+
+        // Act
+        Response response = given()
+                .contentType(ContentType.JSON)
+                .body(registerPayload)
+                .when()
+                .post("/api/v1/auth/register")
+                .then()
+                .statusCode(201)
+                .body("accessToken", notNullValue())
+                .body("refreshToken", notNullValue())
+                .body("tokenType", equalTo("Bearer"))
+                .body("user.email", equalTo("autotag1@ordago.dev"))
+                .body("user.gameName", equalTo("AutoTagPlayer"))
+                .body("user.tagLine", notNullValue())
+                .extract().response();
+
+        // Assert
+        autoAssignedTagLine1 = response.path("user.tagLine");
+        assertThat(autoAssignedTagLine1)
+                .as("Auto-assigned tagLine must be exactly 4 numeric digits")
+                .matches("^[0-9]{4}$");
+
+        int tagValue = Integer.parseInt(autoAssignedTagLine1);
+        assertThat(tagValue)
+                .as("Auto-assigned tagLine value must be in range [1000..9999]")
+                .isBetween(1000, 9999);
+
+        String jwtToken = response.path("accessToken");
+        assertEnrichedJwtClaims(jwtToken, "AutoTagPlayer#" + autoAssignedTagLine1, false);
+    }
+
+    @Test
+    @Order(23)
+    void shouldRegisterSecondUserWithSameGameNameAndOmittedTagLineWithoutCollision() {
+        // Arrange: second user with SAME gameName "AutoTagPlayer" and tagLine omitted
+        Map<String, Object> registerPayload = Map.of(
+                "email", "autotag2@ordago.dev",
+                "password", "AutoTagPassword123!",
+                "gameName", "AutoTagPlayer",
+                "deviceId", "device-autotag-2",
+                "deviceName", "Chrome AutoTag 2"
+        );
+
+        // Act
+        Response response = given()
+                .contentType(ContentType.JSON)
+                .body(registerPayload)
+                .when()
+                .post("/api/v1/auth/register")
+                .then()
+                .statusCode(201)
+                .body("accessToken", notNullValue())
+                .body("refreshToken", notNullValue())
+                .body("tokenType", equalTo("Bearer"))
+                .body("user.email", equalTo("autotag2@ordago.dev"))
+                .body("user.gameName", equalTo("AutoTagPlayer"))
+                .body("user.tagLine", notNullValue())
+                .extract().response();
+
+        // Assert
+        autoAssignedTagLine2 = response.path("user.tagLine");
+        assertThat(autoAssignedTagLine2)
+                .as("Second auto-assigned tagLine must be exactly 4 numeric digits")
+                .matches("^[0-9]{4}$");
+
+        int tagValue = Integer.parseInt(autoAssignedTagLine2);
+        assertThat(tagValue)
+                .as("Second auto-assigned tagLine value must be in range [1000..9999]")
+                .isBetween(1000, 9999);
+
+        assertThat(autoAssignedTagLine2)
+                .as("Second user must receive a distinct tagLine without collision")
+                .isNotEqualTo(autoAssignedTagLine1);
+
+        String jwtToken = response.path("accessToken");
+        assertEnrichedJwtClaims(jwtToken, "AutoTagPlayer#" + autoAssignedTagLine2, false);
+    }
+
+    @Test
+    @Order(24)
+    void shouldRegisterUserWithExplicitNullOrBlankTagLineAndAutoAssignUniqueTag() {
+        // Arrange: third user with SAME gameName and explicit blank tagLine
+        Map<String, Object> blankPayload = Map.of(
+                "email", "autotag_blank@ordago.dev",
+                "password", "AutoTagPassword123!",
+                "gameName", "AutoTagPlayer",
+                "tagLine", "   ",
+                "deviceId", "device-autotag-3"
+        );
+
+        // Act: register with blank tagLine
+        Response blankResponse = given()
+                .contentType(ContentType.JSON)
+                .body(blankPayload)
+                .when()
+                .post("/api/v1/auth/register")
+                .then()
+                .statusCode(201)
+                .body("user.gameName", equalTo("AutoTagPlayer"))
+                .body("user.tagLine", notNullValue())
+                .extract().response();
+
+        String tagLineBlank = blankResponse.path("user.tagLine");
+        assertThat(tagLineBlank)
+                .as("Blank tagLine registration must receive 4 numeric digits")
+                .matches("^[0-9]{4}$");
+        assertThat(Integer.parseInt(tagLineBlank))
+                .isBetween(1000, 9999);
+        assertThat(tagLineBlank)
+                .as("TagLine for blank registration must not collide with previous assignments")
+                .isNotEqualTo(autoAssignedTagLine1)
+                .isNotEqualTo(autoAssignedTagLine2);
+
+        // Arrange: fourth user with SAME gameName and explicit null tagLine
+        Map<String, Object> nullPayload = new HashMap<>();
+        nullPayload.put("email", "autotag_null@ordago.dev");
+        nullPayload.put("password", "AutoTagPassword123!");
+        nullPayload.put("gameName", "AutoTagPlayer");
+        nullPayload.put("tagLine", null);
+
+        // Act: register with null tagLine
+        Response nullResponse = given()
+                .contentType(ContentType.JSON)
+                .body(nullPayload)
+                .when()
+                .post("/api/v1/auth/register")
+                .then()
+                .statusCode(201)
+                .body("user.gameName", equalTo("AutoTagPlayer"))
+                .body("user.tagLine", notNullValue())
+                .extract().response();
+
+        String tagLineNull = nullResponse.path("user.tagLine");
+        assertThat(tagLineNull)
+                .as("Null tagLine registration must receive 4 numeric digits")
+                .matches("^[0-9]{4}$");
+        assertThat(Integer.parseInt(tagLineNull))
+                .isBetween(1000, 9999);
+        assertThat(tagLineNull)
+                .as("TagLine for null registration must not collide with previous assignments")
+                .isNotEqualTo(autoAssignedTagLine1)
+                .isNotEqualTo(autoAssignedTagLine2)
+                .isNotEqualTo(tagLineBlank);
+    }
+
+    @Test
+    @Order(25)
+    void shouldRejectRegistrationWhenExplicitlySpecifyingExistingAutoAssignedTagLine() {
+        assertThat(autoAssignedTagLine1)
+                .as("Precondition: autoAssignedTagLine1 must be set by preceding test")
+                .isNotBlank();
+
+        // Arrange: Deliberately request the same gameName AND the exact tagLine assigned to user 1
+        Map<String, Object> duplicatePayload = Map.of(
+                "email", "autotag_conflict@ordago.dev",
+                "password", "AutoTagPassword123!",
+                "gameName", "AutoTagPlayer",
+                "tagLine", autoAssignedTagLine1
+        );
+
+        // Act & Assert: Expect 409 Conflict
+        given()
+                .contentType(ContentType.JSON)
+                .body(duplicatePayload)
+                .when()
+                .post("/api/v1/auth/register")
+                .then()
+                .statusCode(409);
+
+        // Also verify case-insensitive conflict: lowercase gameName and lowercase tagLine
+        Map<String, Object> duplicateCasePayload = Map.of(
+                "email", "autotag_conflict_case@ordago.dev",
+                "password", "AutoTagPassword123!",
+                "gameName", "autotagplayer",
+                "tagLine", autoAssignedTagLine1.toLowerCase()
+        );
+
+        given()
+                .contentType(ContentType.JSON)
+                .body(duplicateCasePayload)
+                .when()
+                .post("/api/v1/auth/register")
+                .then()
+                .statusCode(409);
     }
 }

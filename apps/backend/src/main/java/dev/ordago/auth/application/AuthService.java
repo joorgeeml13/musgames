@@ -44,6 +44,7 @@ import dev.ordago.auth.domain.port.out.UserSessionRepositoryPort;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase.SendEmailCommand;
 import dev.ordago.profile.domain.exception.UserProfileNotFoundException;
+import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
 import dev.ordago.profile.domain.port.in.GetUserProfileUseCase;
@@ -116,6 +117,7 @@ public class AuthService implements
     public AuthResult register(RegisterCommand command) {
         Objects.requireNonNull(command, "RegisterCommand cannot be null");
         Email email = Email.of(command.email());
+        PlayerTag.validateGameName(command.gameName());
 
         if (accountRepository.existsByEmail(email.value())) {
             throw new EmailAlreadyExistsException(email.value());
@@ -129,7 +131,7 @@ public class AuthService implements
 
         String tagLine = command.tagLine();
         if (tagLine == null || tagLine.isBlank()) {
-            tagLine = generateDefaultTagLine();
+            tagLine = generateDefaultTagLine(command.gameName());
         }
 
         UserProfile profile = createUserProfileUseCase.createUserProfile(
@@ -497,9 +499,8 @@ public class AuthService implements
         return new SessionWithToken(session, plainRefreshToken);
     }
 
-    private String generateDefaultTagLine() {
-        int randomNum = java.util.concurrent.ThreadLocalRandom.current().nextInt(1000, 9999);
-        return String.valueOf(randomNum);
+    private String generateDefaultTagLine(String gameName) {
+        return createUserProfileUseCase.calculateAvailableTagLine(gameName);
     }
 
     private String resolvePlayerTag(UUID accountId) {
