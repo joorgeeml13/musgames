@@ -191,28 +191,23 @@ flowchart TD
     C -- Sí --> D["CreateUserProfileUseCase.calculateAvailableTagLine(gameName)"]
     C -- No --> E["Crear perfil con tagLine solicitado"]
     D --> F["UserProfilePanacheRepository"]
-    F --> G["¿Es PostgreSQL? (JDBC Metadata Guard)"]
-    G -- Sí --> H["SELECT pg_advisory_xact_lock(hashtext(canonicalGameName))"]
-    G -- No --> I["Continuar sin lock (Entornos de Mock/Test)"]
-    H --> J["Cargar tags existentes para canonicalGameName"]
-    I --> J
-    J --> K["Fase 1: 50 intentos aleatorios [1000..9999]"]
-    K -- Disponible --> L["Retornar tagLine libre"]
-    K -- Colisión continua --> M["Fase 2: Barrido circular con offset [1000..9999]"]
-    M -- Disponible --> L
-    M -- 9000 tags tomados --> N["Fase 3: Escalado a 5 dígitos [10000..99999]"]
-    N -- Disponible --> L
-    N -- 99000 tags tomados --> O["throw PlayerTagCapacityExceededException (409)"]
+    F --> G["SELECT pg_advisory_xact_lock(hashtext(canonicalGameName))"]
+    G --> H["PostgreSQL: generate_series(1000, 9999) + NOT EXISTS + LIMIT 1"]
+    H -- Hueco libre encontrado --> I["Retornar tagLine (ej. 1000)"]
+    H -- Rango 4 dígitos agotado --> J["PostgreSQL: generate_series(10000, 99999) + NOT EXISTS + LIMIT 1"]
+    J -- Hueco libre encontrado --> I
+    J -- Rango 5 dígitos agotado --> K["throw PlayerTagCapacityExceededException (409)"]
 ```
 
-### C. Mecanismos Clave de Seguridad y Concurrencia
+### C. Mecanismos Clave de Rendimiento y Concurrencia
 
 1. **Advisory Lock Transaccional en PostgreSQL (`pg_advisory_xact_lock`):**
-   - Se adquiere un bloqueo consultivo a nivel de transacción sobre el hash de 32 bits del nombre canónico: `hashtext(canonicalGameName)`.
+   - Se adquiere de forma directa un bloqueo consultivo transaccional sobre el hash del nombre canónico: `hashtext(canonicalGameName)`.
    - Serializa únicamente las transacciones concurrentes que intentan registrar o asignar etiquetas para el **mismo** `gameName`. Transacciones con distintos nombres operan en paralelo sin bloqueos.
    - El lock se libera automáticamente al terminar la transacción (sea por `COMMIT` o `ROLLBACK`), eliminando fugas de bloqueos y deadlocks.
-2. **Protección Anti-Poisoning de Transacciones Hibernate:**
-   - La verificación `isPostgreSql()` inspecciona previamente los metadatos JDBC de la conexión antes de ejecutar SQL nativo. Esto previene que dialectos de testing en memoria (ej. H2) arrojen fallos de función nativa que marquen la sesión JPA como `rollback-only`.
+2. **Búsqueda Eficiente de Huecos en Base de Datos (Zero-Memory Overhead):**
+   - En lugar de descargar miles de registros en la memoria JVM y procesar bucles en Java, la búsqueda del primer hueco libre se delega directamente a PostgreSQL con `generate_series(1000, 9999) AS s(val) WHERE NOT EXISTS (...) LIMIT 1`.
+   - La evaluación aprovecha de forma perezosa el índice único `uq_user_profiles_player_tag`, deteniéndose en el primer número disponible sin sobrecarga de heap ni transferencias masivas de datos por red.
 3. **Validación Temprana Fail-Fast:**
    - `PlayerTag.validateGameName(command.gameName())` valida formato y longitud antes de hashear contraseñas mediante Argon2id, persistir cuentas o adquirir locks en la base de datos, mitigando vectores DoS por consumo de CPU y conexiones.
 4. **Manejo Controlado de Excepciones de Dominio:**
