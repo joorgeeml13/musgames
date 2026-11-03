@@ -154,3 +154,58 @@ response = await fetch(url, {
 Esto garantiza que:
 1. El navegador envíe automáticamente las cookies en peticiones tanto de mismo origen como cruzadas entre el servidor de desarrollo (`http://localhost:5173`) y el backend (`http://localhost:8080`).
 2. Las cabeceras `Set-Cookie` sean procesadas y almacenadas de forma segura por el motor del navegador.
+
+---
+
+## 6. Estructura y Enriquecimiento de Claims JWT (Access Token)
+
+Los tokens de acceso JWT emitidos por `SmallRyeJwtTokenProvider` incorporan claims estándar (RFC 7519 / MicroProfile JWT) y claims enriquecidos para contextualizar la sesión sin necesidad de consultas recurrentes a la base de datos o servicios de perfil en cada petición.
+
+### A. Especificación de Claims
+
+| Claim | Tipo | Origen | Propósito / Descripción |
+| :--- | :--- | :--- | :--- |
+| `iss` | `String` | Configuración (`mp.jwt.verify.issuer`) | Emisor del token (por defecto `https://ordago.dev`). |
+| `sub` | `String` (UUID) | `Account.getId()` | Identificador universal único de la cuenta. |
+| `upn` | `String` | `Account.getEmail()` | User Principal Name para compatibilidad MicroProfile JWT y logging. |
+| `groups` | `Array<String>` | `Account.getRoles()` | Conjunto de roles (`["USER"]`, `["ADMIN", "USER"]`) para autorización RBAC (`@RolesAllowed`). |
+| `iat` | `Long` (segundos) | `Instant.now()` | Timestamp epoch de emisión del token. |
+| `exp` | `Long` (segundos) | `Instant.now() + 900s` | Timestamp epoch de expiración (15 minutos). |
+| `jti` | `String` (UUID) | `UUID.randomUUID()` | Identificador único criptográfico de token. Previene ataques de replay y facilita trazabilidad en auditoría. |
+| `email` | `String` | `Account.getEmail()` | Correo electrónico del usuario autenticado. |
+| `sessionId` | `String` (UUID) | `UserSession.getId()` | Identificador de la sesión en base de datos (`user_sessions`), permitiendo invalidación individual. |
+| `deviceId` | `String` | `UserSession.getDeviceId()` | Identificador del dispositivo del cliente (web, iOS, Android). |
+| `isAdmin` | `Boolean` | `Account.hasRole("ADMIN")` | Flag de conveniencia para consumo rápido en frontend y endpoints. |
+| `emailVerified` | `Boolean` | `Account.isEmailVerified()` | Indica si el usuario ha confirmado su dirección de email. Permite gating condicional de funcionalidades (partidas clasificatorias, chat). |
+| `playerTag` | `String` | `UserProfile.getPlayerTag().formatted()` | Etiqueta pública de jugador formateada (`GameName#TAG`, ej. `ITMusMaster#ESP`). Si el perfil no existe, el claim se omite limpiamente. |
+
+### B. Ejemplo de Payload Decodificado
+
+```json
+{
+  "iss": "https://ordago.dev",
+  "sub": "b2c0cb35-b217-48f6-be11-37beeb76e5d2",
+  "upn": "jugador@ordago.dev",
+  "groups": [
+    "USER"
+  ],
+  "iat": 1793719200,
+  "exp": 1793720100,
+  "jti": "d4e5f6a7-8901-4bc3-a4d5-e6f7a8b9c0d1",
+  "email": "jugador@ordago.dev",
+  "sessionId": "f8a7e6d5-c4b3-4a21-9e87-654321fedcba",
+  "deviceId": "web-browser-chrome-linux",
+  "isAdmin": false,
+  "emailVerified": true,
+  "playerTag": "ITMusMaster#ESP"
+}
+```
+
+### C. Presupuesto de Tamaño y Límites de Cabecera
+
+- **Payload JSON sin comprimir:** ~380 a 460 bytes.
+- **Token firmado completo (RS256 Base64Url):** ~900 a 1.250 bytes.
+- **Compatibilidad con estándares:**
+  - Límite de cookies de navegadores (RFC 6265): **4.096 bytes** (el token consume ~25% del límite).
+  - Límite de cabecera HTTP de Vert.x / Quarkus (`quarkus.http.limits.max-header-size`): **8.192 bytes** por defecto.
+- **Rendimiento:** Al contener `playerTag` y `emailVerified` directamente en el token verificado criptográficamente por la clave pública RS256, los endpoints y el WebSocket evitan lecturas de perfil o cuenta en caché/base de datos durante la negociación inicial y peticiones REST concurrentes.

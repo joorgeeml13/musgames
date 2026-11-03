@@ -51,6 +51,11 @@ El lobby social y la mesa de juego conviven bajo el mismo origen (`dominio.com`)
 - **Consumo Selectivo:** Microservicios dedicados (como el servicio de correo `apps/mailer` o el sistema de auditoría antifraude) consumen exclusivamente los eventos de su dominio mediante bindings de patrones.
 - **Detalles completos:** Ver [07-rabbitmq-topic-routing.md](file:///home/jorge/.personal/musgames/docs/technical/07-rabbitmq-topic-routing.md).
 
+### F. Tokens JWT Enriquecidos y Autocontenidos
+
+- **Identidad Extendida sin Consultas Extra:** Los tokens de acceso incorporan claims clave del jugador (`playerTag`, `emailVerified`, `jti`, `isAdmin`, `sessionId`, `deviceId`), permitiendo que endpoints REST y el handshake de WebSockets resuelvan la identidad y capacidades del jugador directamente desde el token criptográfico firmado con RS256.
+- **Detalles completos:** Ver [06-auth-cookie-transport.md](file:///home/jorge/.personal/musgames/docs/technical/06-auth-cookie-transport.md) §6.
+
 ## 3. Flujo de Componentes
 
 ```text
