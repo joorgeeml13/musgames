@@ -162,4 +162,37 @@ describe('HttpClient Clean Infrastructure', () => {
     await client.get('/api/custom-endpoint')
     expect(requestedUrl).toBe('http://api.mus.local/api/custom-endpoint')
   })
+
+  it('sends credentials as "include" by default to support HttpOnly session cookies', async () => {
+    let capturedInit: RequestInit | undefined
+
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      capturedInit = init
+      return new Response(JSON.stringify({ success: true, data: { authenticated: true }, message: 'OK', timestamp: '' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    await client.get('/api/auth/me')
+    expect(capturedInit?.credentials).toBe('include')
+  })
+
+  it('allows overriding credentials in request options (e.g. "omit" or "same-origin")', async () => {
+    let capturedInit: RequestInit | undefined
+
+    globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      capturedInit = init
+      return new Response(JSON.stringify({ success: true, data: {}, message: 'OK', timestamp: '' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+
+    await client.get('/api/public', undefined, { credentials: 'omit' })
+    expect(capturedInit?.credentials).toBe('omit')
+
+    await client.post('/api/public', { foo: 'bar' }, { credentials: 'same-origin' })
+    expect(capturedInit?.credentials).toBe('same-origin')
+  })
 })

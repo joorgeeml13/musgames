@@ -116,6 +116,7 @@ export class HttpClient {
     try {
       response = await fetch(url, {
         ...restOptions,
+        credentials: restOptions.credentials ?? 'include',
         body: requestBody,
         headers,
       })

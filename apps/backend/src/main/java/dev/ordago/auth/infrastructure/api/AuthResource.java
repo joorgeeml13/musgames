@@ -15,12 +15,15 @@ import io.vertx.core.http.HttpServerRequest;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.CookieParam;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.Cookie;
 import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.NewCookie;
 import jakarta.ws.rs.core.Response;
 import dev.ordago.auth.domain.model.Account;
 import dev.ordago.auth.domain.model.AuthTokens;
@@ -47,8 +50,10 @@ import dev.ordago.auth.infrastructure.api.dto.ResetPasswordRequest;
 import dev.ordago.auth.infrastructure.api.dto.TokenResponse;
 import dev.ordago.auth.infrastructure.api.dto.UserInfoResponse;
 import dev.ordago.auth.infrastructure.api.dto.VerifyEmailRequest;
+import dev.ordago.auth.infrastructure.security.AuthCookieService;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.GetUserProfileUseCase;
+import dev.ordago.shared.domain.exception.ValidationException;
 import dev.ordago.shared.infrastructure.api.response.ApiError;
 import dev.ordago.shared.infrastructure.i18n.RequestLanguageContext;
 
@@ -70,6 +75,7 @@ public class AuthResource {
     private final RequestPasswordResetUseCase requestPasswordResetUseCase;
     private final ResetPasswordUseCase resetPasswordUseCase;
     private final ChangePasswordUseCase changePasswordUseCase;
+    private final AuthCookieService authCookieService;
     private final RequestLanguageContext languageContext;
     private final JsonWebToken jwt;
 
@@ -85,6 +91,7 @@ public class AuthResource {
             RequestPasswordResetUseCase requestPasswordResetUseCase,
             ResetPasswordUseCase resetPasswordUseCase,
             ChangePasswordUseCase changePasswordUseCase,
+            AuthCookieService authCookieService,
             RequestLanguageContext languageContext,
             JsonWebToken jwt
     ) {
@@ -99,6 +106,7 @@ public class AuthResource {
         this.requestPasswordResetUseCase = Objects.requireNonNull(requestPasswordResetUseCase, "RequestPasswordResetUseCase cannot be null");
         this.resetPasswordUseCase = Objects.requireNonNull(resetPasswordUseCase, "ResetPasswordUseCase cannot be null");
         this.changePasswordUseCase = Objects.requireNonNull(changePasswordUseCase, "ChangePasswordUseCase cannot be null");
+        this.authCookieService = Objects.requireNonNull(authCookieService, "AuthCookieService cannot be null");
         this.languageContext = Objects.requireNonNull(languageContext, "RequestLanguageContext cannot be null");
         this.jwt = Objects.requireNonNull(jwt, "JsonWebToken cannot be null");
     }
@@ -132,7 +140,15 @@ public class AuthResource {
 
         AuthResult result = registerUseCase.register(command);
         UserProfile profile = getUserProfileUseCase.getProfileById(result.account().getId());
+        NewCookie accessCookie = authCookieService.createAccessTokenCookie(
+                result.tokens().accessToken(),
+                result.tokens().expiresInSeconds()
+        );
+        NewCookie refreshCookie = authCookieService.createRefreshTokenCookie(
+                result.tokens().refreshToken()
+        );
         return Response.status(Response.Status.CREATED)
+                .cookie(accessCookie, refreshCookie)
                 .entity(AuthResponse.of(result, profile))
                 .build();
     }
@@ -162,11 +178,21 @@ public class AuthResource {
 
         AuthResult result = loginUseCase.login(command);
         UserProfile profile = getUserProfileUseCase.getProfileById(result.account().getId());
-        return Response.ok(AuthResponse.of(result, profile)).build();
+        NewCookie accessCookie = authCookieService.createAccessTokenCookie(
+                result.tokens().accessToken(),
+                result.tokens().expiresInSeconds()
+        );
+        NewCookie refreshCookie = authCookieService.createRefreshTokenCookie(
+                result.tokens().refreshToken()
+        );
+        return Response.ok(AuthResponse.of(result, profile))
+                .cookie(accessCookie, refreshCookie)
+                .build();
     }
 
     @POST
     @Path("/refresh")
+    @Consumes({MediaType.APPLICATION_JSON, MediaType.WILDCARD})
     @Operation(summary = "Refresh access token", description = "Rotates refresh token and issues a new JWT access token")
     @APIResponses(value = {
             @APIResponse(responseCode = "200", description = "Token refreshed successfully",
@@ -176,15 +202,37 @@ public class AuthResource {
             @APIResponse(responseCode = "401", description = "Invalid or expired refresh token",
                     content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
     })
-    public Response refresh(@Valid RefreshTokenRequest request, @Context HttpServerRequest httpRequest) {
+    public Response refresh(
+            @CookieParam("refresh_token") Cookie refreshCookie,
+            @Valid RefreshTokenRequest request,
+            @Context HttpServerRequest httpRequest
+    ) {
+        String refreshToken = authCookieService.extractRefreshToken(
+                refreshCookie,
+                request != null ? request.refreshToken() : null
+        );
+
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new ValidationException("Refresh token is required");
+        }
+
         String clientIp = extractClientIp(httpRequest);
         RefreshTokenUseCase.RefreshTokenCommand command = new RefreshTokenUseCase.RefreshTokenCommand(
-                request.refreshToken(),
+                refreshToken,
                 clientIp
         );
 
         AuthTokens tokens = refreshTokenUseCase.refreshToken(command);
-        return Response.ok(TokenResponse.of(tokens)).build();
+        NewCookie accessCookie = authCookieService.createAccessTokenCookie(
+                tokens.accessToken(),
+                tokens.expiresInSeconds()
+        );
+        NewCookie newRefreshCookie = authCookieService.createRefreshTokenCookie(
+                tokens.refreshToken()
+        );
+        return Response.ok(TokenResponse.of(tokens))
+                .cookie(accessCookie, newRefreshCookie)
+                .build();
     }
 
     @POST
@@ -194,12 +242,20 @@ public class AuthResource {
     @APIResponses(value = {
             @APIResponse(responseCode = "204", description = "Session invalidated successfully")
     })
-    public Response logout(LogoutRequest request) {
+    public Response logout(
+            @CookieParam("refresh_token") Cookie refreshCookie,
+            LogoutRequest request
+    ) {
         UUID sessionId = extractOptionalSessionId();
-        String refreshToken = request != null ? request.refreshToken() : null;
+        String refreshToken = authCookieService.extractRefreshToken(
+                refreshCookie,
+                request != null ? request.refreshToken() : null
+        );
 
         logoutUseCase.logout(new LogoutUseCase.LogoutCommand(refreshToken, sessionId));
-        return Response.noContent().build();
+        return Response.noContent()
+                .cookie(authCookieService.clearAccessTokenCookie(), authCookieService.clearRefreshTokenCookie())
+                .build();
     }
 
     @GET
@@ -293,7 +349,9 @@ public class AuthResource {
     public Response changePassword(@Valid ChangePasswordRequest request) {
         UUID accountId = extractAccountId();
         changePasswordUseCase.changePassword(accountId, request.currentPassword(), request.newPassword());
-        return Response.noContent().build();
+        return Response.noContent()
+                .cookie(authCookieService.clearAccessTokenCookie(), authCookieService.clearRefreshTokenCookie())
+                .build();
     }
 
     private String extractClientIp(HttpServerRequest httpRequest) {

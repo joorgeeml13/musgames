@@ -318,6 +318,7 @@ class AuthResourceIT {
                 .then()
                 .statusCode(204);
 
+        accountPanacheRepository.getEntityManager().clear();
         AccountEntity updated = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
         assertThat(updated.emailVerified).isTrue();
         assertThat(updated.emailVerificationToken).isNull();
