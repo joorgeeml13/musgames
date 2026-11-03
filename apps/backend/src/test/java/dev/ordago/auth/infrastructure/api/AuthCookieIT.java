@@ -1,15 +1,24 @@
 package dev.ordago.auth.infrastructure.api;
 
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import jakarta.inject.Inject;
+import org.eclipse.microprofile.jwt.JsonWebToken;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.http.Cookie;
 import io.restassured.response.Response;
+import io.smallrye.jwt.auth.principal.DefaultJWTParser;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import dev.ordago.auth.infrastructure.persistence.AccountEntity;
+import dev.ordago.auth.infrastructure.persistence.AccountPanacheRepository;
 
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,6 +32,76 @@ class AuthCookieIT {
     private static final String REFRESH_COOKIE_NAME = "refresh_token";
     private static final String ACCESS_COOKIE_PATH = "/";
     private static final String REFRESH_COOKIE_PATH = "/api/v1/auth";
+
+    @Inject
+    AccountPanacheRepository accountPanacheRepository;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final DefaultJWTParser jwtParser = new DefaultJWTParser();
+
+    private JsonNode decodeJwtPayload(String token) {
+        assertThat(token).as("JWT token must not be null or blank").isNotBlank();
+        String[] parts = token.split("\\.");
+        assertThat(parts).as("JWT token must consist of 3 parts (header.payload.signature)").hasSize(3);
+        byte[] payloadBytes = Base64.getUrlDecoder().decode(parts[1]);
+        try {
+            return objectMapper.readTree(payloadBytes);
+        } catch (Exception e) {
+            throw new AssertionError("Failed to parse JWT payload JSON", e);
+        }
+    }
+
+    private void assertEnrichedJwtClaims(String token, String expectedPlayerTag, boolean expectedEmailVerified) {
+        assertThat(token).as("JWT token must not be null or blank").isNotBlank();
+
+        // 1. Assert via Base64 JSON payload
+        JsonNode payload = decodeJwtPayload(token);
+
+        // Claim: playerTag
+        assertThat(payload.hasNonNull("playerTag"))
+                .as("JWT payload must contain non-null 'playerTag' claim").isTrue();
+        assertThat(payload.get("playerTag").isTextual())
+                .as("'playerTag' claim must be textual").isTrue();
+        assertThat(payload.get("playerTag").asText())
+                .as("'playerTag' claim must match expected player tag").isEqualTo(expectedPlayerTag);
+
+        // Claim: emailVerified
+        assertThat(payload.hasNonNull("emailVerified"))
+                .as("JWT payload must contain non-null 'emailVerified' claim").isTrue();
+        assertThat(payload.get("emailVerified").isBoolean())
+                .as("'emailVerified' claim must be boolean").isTrue();
+        assertThat(payload.get("emailVerified").asBoolean())
+                .as("'emailVerified' claim must match expected boolean").isEqualTo(expectedEmailVerified);
+
+        // Claim: jti
+        assertThat(payload.hasNonNull("jti"))
+                .as("JWT payload must contain non-null 'jti' claim").isTrue();
+        assertThat(payload.get("jti").isTextual())
+                .as("'jti' claim must be textual").isTrue();
+        String jti = payload.get("jti").asText();
+        assertThat(jti).as("'jti' claim must not be blank").isNotBlank();
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                () -> UUID.fromString(jti),
+                "'jti' claim must be a valid UUID string: " + jti
+        );
+
+        // 2. Assert via MicroProfile JWT Parser
+        try {
+            JsonWebToken jwt = jwtParser.parseOnly(token);
+            assertThat(jwt.getClaim("playerTag").toString().replace("\"", ""))
+                    .as("MP-JWT playerTag claim").isEqualTo(expectedPlayerTag);
+            assertThat(Boolean.parseBoolean(jwt.getClaim("emailVerified").toString()))
+                    .as("MP-JWT emailVerified claim").isEqualTo(expectedEmailVerified);
+            assertThat(jwt.getTokenID())
+                    .as("MP-JWT token ID (jti)").isEqualTo(jti);
+        } catch (Exception e) {
+            throw new AssertionError("Failed to parse token with DefaultJWTParser", e);
+        }
+    }
+
+    private String extractJti(String token) {
+        return decodeJwtPayload(token).get("jti").asText();
+    }
 
     private Map<String, Object> buildRegisterPayload(String prefix) {
         String unique = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
@@ -106,6 +185,11 @@ class AuthCookieIT {
             assertThat(setCookieHeaders)
                     .anyMatch(h -> h.contains(ACCESS_COOKIE_NAME) && h.contains("HttpOnly") && h.contains("SameSite=Strict") && h.contains("Path=/"))
                     .anyMatch(h -> h.contains(REFRESH_COOKIE_NAME) && h.contains("HttpOnly") && h.contains("SameSite=Strict") && h.contains("Path=/api/v1/auth"));
+
+            // Assert - Enriched claims (playerTag, emailVerified=false, valid jti UUID) in body and cookie
+            String expectedPlayerTag = payload.get("gameName") + "#" + payload.get("tagLine");
+            assertEnrichedJwtClaims(bodyAccessToken, expectedPlayerTag, false);
+            assertEnrichedJwtClaims(accessCookie.getValue(), expectedPlayerTag, false);
         }
 
         @Test
@@ -150,6 +234,11 @@ class AuthCookieIT {
             assertThat(refreshCookie.getPath()).isEqualTo(REFRESH_COOKIE_PATH);
             assertThat(refreshCookie.getSameSite()).isEqualToIgnoringCase("Strict");
             assertThat(refreshCookie.getMaxAge()).isPositive();
+
+            // Assert - Enriched claims (playerTag, emailVerified=false, valid jti UUID) in body and cookie
+            String expectedPlayerTag = payload.get("gameName") + "#" + payload.get("tagLine");
+            assertEnrichedJwtClaims(bodyAccessToken, expectedPlayerTag, false);
+            assertEnrichedJwtClaims(accessCookie.getValue(), expectedPlayerTag, false);
         }
     }
 
@@ -271,6 +360,15 @@ class AuthCookieIT {
             assertThat(newRefreshCookie.getPath()).isEqualTo(REFRESH_COOKIE_PATH);
             assertThat(newRefreshCookie.getSameSite()).isEqualToIgnoringCase("Strict");
             assertThat(newRefreshCookie.getMaxAge()).isPositive();
+
+            // Assert - Enriched claims (playerTag, emailVerified=false, valid jti UUID) in original and rotated tokens
+            String expectedPlayerTag = payload.get("gameName") + "#" + payload.get("tagLine");
+            assertEnrichedJwtClaims(originalAccessToken, expectedPlayerTag, false);
+            assertEnrichedJwtClaims(newAccessToken, expectedPlayerTag, false);
+            assertEnrichedJwtClaims(newAccessCookie.getValue(), expectedPlayerTag, false);
+            assertThat(extractJti(newAccessToken))
+                    .as("Rotated access token must have a distinct jti")
+                    .isNotEqualTo(extractJti(originalAccessToken));
         }
 
         @Test
@@ -298,6 +396,13 @@ class AuthCookieIT {
             String newRefreshToken = response.path("refreshToken");
             assertThat(newAccessToken).isNotBlank();
             assertThat(newRefreshToken).isNotBlank().isNotEqualTo(originalRefreshToken);
+
+            // Assert - Enriched claims in body and cookie
+            String expectedPlayerTag = payload.get("gameName") + "#" + payload.get("tagLine");
+            assertEnrichedJwtClaims(newAccessToken, expectedPlayerTag, false);
+            Cookie newAccessCookie = response.getDetailedCookie(ACCESS_COOKIE_NAME);
+            assertThat(newAccessCookie).isNotNull();
+            assertEnrichedJwtClaims(newAccessCookie.getValue(), expectedPlayerTag, false);
         }
 
         @Test
@@ -470,6 +575,215 @@ class AuthCookieIT {
                     .post("/api/v1/auth/refresh")
                     .then()
                     .statusCode(401);
+        }
+    }
+
+    @Nested
+    @DisplayName("6. Enriched JWT Access Token Claims (/register, /login, /refresh, emailVerified, jti)")
+    class EnrichedJwtClaimsTests {
+
+        @Test
+        @DisplayName("Registration issues JWT in body and cookie with playerTag, emailVerified=false, and valid jti UUID")
+        void shouldContainEnrichedClaimsOnRegistrationInBothBodyAndCookie() {
+            // Arrange
+            Map<String, Object> payload = buildRegisterPayload("claim_reg");
+            String expectedPlayerTag = payload.get("gameName") + "#" + payload.get("tagLine");
+
+            // Act
+            Response response = register(payload).then().statusCode(201).extract().response();
+
+            // Assert
+            String bodyAccessToken = response.path("accessToken");
+            Cookie accessCookie = response.getDetailedCookie(ACCESS_COOKIE_NAME);
+            assertThat(accessCookie).isNotNull();
+
+            // Both body and cookie contain enriched claims
+            assertEnrichedJwtClaims(bodyAccessToken, expectedPlayerTag, false);
+            assertEnrichedJwtClaims(accessCookie.getValue(), expectedPlayerTag, false);
+
+            // Cookie and body tokens match identically
+            assertThat(accessCookie.getValue()).isEqualTo(bodyAccessToken);
+        }
+
+        @Test
+        @DisplayName("Login issues JWT in body and cookie with playerTag, emailVerified=false, and distinct jti UUID")
+        void shouldContainEnrichedClaimsOnLoginInBothBodyAndCookie() {
+            // Arrange
+            Map<String, Object> payload = buildRegisterPayload("claim_login");
+            String expectedPlayerTag = payload.get("gameName") + "#" + payload.get("tagLine");
+            Response regResponse = register(payload).then().statusCode(201).extract().response();
+            String regAccessToken = regResponse.path("accessToken");
+            String regJti = extractJti(regAccessToken);
+
+            // Act
+            Response response = login(
+                    (String) payload.get("email"),
+                    (String) payload.get("password"),
+                    (String) payload.get("deviceId")
+            ).then().statusCode(200).extract().response();
+
+            // Assert
+            String loginAccessToken = response.path("accessToken");
+            Cookie accessCookie = response.getDetailedCookie(ACCESS_COOKIE_NAME);
+            assertThat(accessCookie).isNotNull();
+
+            // Both body and cookie contain enriched claims
+            assertEnrichedJwtClaims(loginAccessToken, expectedPlayerTag, false);
+            assertEnrichedJwtClaims(accessCookie.getValue(), expectedPlayerTag, false);
+
+            // Token has a newly generated, distinct jti UUID
+            String loginJti = extractJti(loginAccessToken);
+            assertThat(loginJti).isNotEqualTo(regJti);
+        }
+
+        @Test
+        @DisplayName("Refresh issues rotated JWT in body and cookie with playerTag, emailVerified=false, and new jti UUID")
+        void shouldContainEnrichedClaimsOnRefreshInBothBodyAndCookie() {
+            // Arrange
+            Map<String, Object> payload = buildRegisterPayload("claim_refresh");
+            String expectedPlayerTag = payload.get("gameName") + "#" + payload.get("tagLine");
+            Response regResponse = register(payload).then().statusCode(201).extract().response();
+            String originalRefreshToken = regResponse.path("refreshToken");
+            String originalAccessToken = regResponse.path("accessToken");
+            String originalJti = extractJti(originalAccessToken);
+
+            // Act
+            Response response = given()
+                    .cookie(REFRESH_COOKIE_NAME, originalRefreshToken)
+                    .contentType(ContentType.JSON)
+                    .body("{}")
+                    .when()
+                    .post("/api/v1/auth/refresh")
+                    .then()
+                    .statusCode(200)
+                    .extract().response();
+
+            // Assert
+            String refreshedAccessToken = response.path("accessToken");
+            Cookie accessCookie = response.getDetailedCookie(ACCESS_COOKIE_NAME);
+            assertThat(accessCookie).isNotNull();
+
+            // Both body and cookie contain enriched claims
+            assertEnrichedJwtClaims(refreshedAccessToken, expectedPlayerTag, false);
+            assertEnrichedJwtClaims(accessCookie.getValue(), expectedPlayerTag, false);
+
+            // Distinct jti from original access token
+            String refreshedJti = extractJti(refreshedAccessToken);
+            assertThat(refreshedJti).isNotEqualTo(originalJti);
+        }
+
+        @Test
+        @DisplayName("Email verification transitions emailVerified claim from false to true in subsequent login and refresh tokens")
+        void shouldTransitionEmailVerifiedClaimFromFalseToTrueAfterVerification() {
+            // Arrange: 1. Register unverified account
+            Map<String, Object> payload = buildRegisterPayload("claim_verify");
+            String email = (String) payload.get("email");
+            String expectedPlayerTag = payload.get("gameName") + "#" + payload.get("tagLine");
+
+            Response regResponse = register(payload).then().statusCode(201).extract().response();
+            String regAccessToken = regResponse.path("accessToken");
+            Cookie regAccessCookie = regResponse.getDetailedCookie(ACCESS_COOKIE_NAME);
+            assertEnrichedJwtClaims(regAccessToken, expectedPlayerTag, false);
+            assertEnrichedJwtClaims(regAccessCookie.getValue(), expectedPlayerTag, false);
+
+            // 2. Fetch email verification token directly from repository
+            AccountEntity account = accountPanacheRepository.findByEmail(email).orElseThrow();
+            String verificationToken = account.emailVerificationToken;
+            assertThat(verificationToken).isNotBlank();
+
+            // Act: 3. Verify email via REST endpoint
+            given()
+                    .contentType(ContentType.JSON)
+                    .body(Map.of("token", verificationToken))
+                    .when()
+                    .post("/api/v1/auth/verify-email")
+                    .then()
+                    .statusCode(204);
+
+            // Verify database state is updated
+            accountPanacheRepository.getEntityManager().clear();
+            AccountEntity updatedAccount = accountPanacheRepository.findByEmail(email).orElseThrow();
+            assertThat(updatedAccount.emailVerified).isTrue();
+
+            // Act & Assert: 4. Subsequent Login issues JWT with emailVerified=true in body & cookie
+            Response loginResponse = login(
+                    email,
+                    (String) payload.get("password"),
+                    (String) payload.get("deviceId")
+            ).then().statusCode(200).extract().response();
+
+            String loginAccessToken = loginResponse.path("accessToken");
+            String loginRefreshToken = loginResponse.path("refreshToken");
+            Cookie loginAccessCookie = loginResponse.getDetailedCookie(ACCESS_COOKIE_NAME);
+
+            assertEnrichedJwtClaims(loginAccessToken, expectedPlayerTag, true);
+            assertEnrichedJwtClaims(loginAccessCookie.getValue(), expectedPlayerTag, true);
+
+            // Act & Assert: 5. Subsequent Refresh issues rotated JWT with emailVerified=true in body & cookie
+            Response refreshResponse = given()
+                    .cookie(REFRESH_COOKIE_NAME, loginRefreshToken)
+                    .contentType(ContentType.JSON)
+                    .body("{}")
+                    .when()
+                    .post("/api/v1/auth/refresh")
+                    .then()
+                    .statusCode(200)
+                    .extract().response();
+
+            String refreshAccessToken = refreshResponse.path("accessToken");
+            Cookie refreshAccessCookie = refreshResponse.getDetailedCookie(ACCESS_COOKIE_NAME);
+
+            assertEnrichedJwtClaims(refreshAccessToken, expectedPlayerTag, true);
+            assertEnrichedJwtClaims(refreshAccessCookie.getValue(), expectedPlayerTag, true);
+
+            // jti is unique across each token issuance
+            String regJti = extractJti(regAccessToken);
+            String loginJti = extractJti(loginAccessToken);
+            String refreshJti = extractJti(refreshAccessToken);
+
+            assertThat(Set.of(regJti, loginJti, refreshJti))
+                    .as("Each issued access token must possess a unique, distinct jti")
+                    .hasSize(3);
+        }
+
+        @Test
+        @DisplayName("Every issued access token generates a unique, non-repeated jti UUID")
+        void shouldGenerateUniqueJtiForEachIssuedAccessToken() {
+            // Arrange
+            Map<String, Object> payload = buildRegisterPayload("claim_jti");
+            String email = (String) payload.get("email");
+            String password = (String) payload.get("password");
+            String deviceId = (String) payload.get("deviceId");
+
+            // 1. Register
+            Response regResponse = register(payload).then().statusCode(201).extract().response();
+            String token1 = regResponse.path("accessToken");
+            String refreshToken = regResponse.path("refreshToken");
+
+            // 2. Login
+            Response loginResponse = login(email, password, deviceId).then().statusCode(200).extract().response();
+            String token2 = loginResponse.path("accessToken");
+
+            // 3. Refresh
+            Response refreshResponse = given()
+                    .cookie(REFRESH_COOKIE_NAME, refreshToken)
+                    .contentType(ContentType.JSON)
+                    .body("{}")
+                    .when()
+                    .post("/api/v1/auth/refresh")
+                    .then()
+                    .statusCode(200)
+                    .extract().response();
+            String token3 = refreshResponse.path("accessToken");
+
+            // Assert - all jti claims are distinct UUIDs
+            String jti1 = extractJti(token1);
+            String jti2 = extractJti(token2);
+            String jti3 = extractJti(token3);
+
+            assertThat(Set.of(jti1, jti2, jti3))
+                    .as("All issued access tokens must have distinct jti UUIDs")
+                    .hasSize(3);
         }
     }
 }

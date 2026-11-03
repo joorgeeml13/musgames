@@ -41,9 +41,11 @@ import dev.ordago.auth.domain.port.out.UserSessionRepositoryPort;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase.SendEmailCommand;
 import dev.ordago.profile.domain.exception.PlayerTagAlreadyTakenException;
+import dev.ordago.profile.domain.exception.UserProfileNotFoundException;
 import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
+import dev.ordago.profile.domain.port.in.GetUserProfileUseCase;
 import dev.ordago.shared.domain.event.DomainEvent;
 import dev.ordago.shared.domain.port.out.EventPublisherPort;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -57,6 +59,7 @@ class AuthServiceTest {
     private StubPasswordEncoder passwordEncoder;
     private StubTokenProvider tokenProvider;
     private StubCreateUserProfileUseCase createUserProfileUseCase;
+    private StubGetUserProfileUseCase getUserProfileUseCase;
     private StubSendEmailUseCase sendEmailUseCase;
     private StubEventPublisherPort eventPublisherPort;
 
@@ -67,6 +70,7 @@ class AuthServiceTest {
         passwordEncoder = new StubPasswordEncoder();
         tokenProvider = new StubTokenProvider();
         createUserProfileUseCase = new StubCreateUserProfileUseCase();
+        getUserProfileUseCase = new StubGetUserProfileUseCase(createUserProfileUseCase.createdProfiles);
         sendEmailUseCase = new StubSendEmailUseCase();
         eventPublisherPort = new StubEventPublisherPort();
 
@@ -76,6 +80,7 @@ class AuthServiceTest {
                 passwordEncoder,
                 tokenProvider,
                 createUserProfileUseCase,
+                getUserProfileUseCase,
                 sendEmailUseCase,
                 eventPublisherPort,
                 5,
@@ -504,6 +509,7 @@ class AuthServiceTest {
                 passwordEncoder,
                 tokenProvider,
                 createUserProfileUseCase,
+                getUserProfileUseCase,
                 sendEmailUseCase,
                 orderingPublisher,
                 5,
@@ -532,7 +538,11 @@ class AuthServiceTest {
                 .getMethod("refreshToken", RefreshTokenUseCase.RefreshTokenCommand.class)
                 .getAnnotation(Transactional.class);
         assertThat(refreshTx).isNotNull();
-        assertThat(refreshTx.dontRollbackOn()).contains(SessionRevokedException.class);
+        assertThat(refreshTx.dontRollbackOn()).contains(
+                SessionRevokedException.class,
+                InvalidCredentialsException.class,
+                AccountBannedException.class
+        );
     }
 
     @Test
@@ -917,6 +927,294 @@ class AuthServiceTest {
         )).isInstanceOf(InvalidCredentialsException.class);
     }
 
+    @Test
+    void shouldPropagatePlayerTagToTokenProviderDuringRegister() {
+        RegisterUseCase.RegisterCommand cmd = new RegisterUseCase.RegisterCommand(
+                "tag_reg@ordago.dev",
+                "Password123!",
+                "TagPlayer",
+                "TAG1",
+                "device-1",
+                "Desktop",
+                "127.0.0.1"
+        );
+
+        authService.register(cmd);
+
+        assertThat(tokenProvider.lastCapturedPlayerTag).isEqualTo("TagPlayer#TAG1");
+    }
+
+    @Test
+    void shouldPropagatePlayerTagToTokenProviderDuringLogin() {
+        authService.register(new RegisterUseCase.RegisterCommand(
+                "tag_login@ordago.dev",
+                "Password123!",
+                "LoginPlayer",
+                "TAG2",
+                "device-1",
+                "Desktop",
+                "127.0.0.1"
+        ));
+
+        tokenProvider.lastCapturedPlayerTag = null;
+
+        authService.login(new LoginUseCase.LoginCommand(
+                "tag_login@ordago.dev",
+                "Password123!",
+                "device-2",
+                "Mobile",
+                "127.0.0.1"
+        ));
+
+        assertThat(tokenProvider.lastCapturedPlayerTag).isEqualTo("LoginPlayer#TAG2");
+    }
+
+    @Test
+    void shouldPropagatePlayerTagToTokenProviderDuringTokenRefresh() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "tag_refresh@ordago.dev",
+                "Password123!",
+                "RefreshPlayer",
+                "TAG3",
+                "device-1",
+                "Desktop",
+                "127.0.0.1"
+        ));
+
+        tokenProvider.lastCapturedPlayerTag = null;
+
+        authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(
+                reg.tokens().refreshToken(),
+                "127.0.0.1"
+        ));
+
+        assertThat(tokenProvider.lastCapturedPlayerTag).isEqualTo("RefreshPlayer#TAG3");
+    }
+
+    @Test
+    void shouldPropagatePlayerTagToTokenProviderDuringTokenRefreshGraceWindow() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "tag_grace@ordago.dev",
+                "Password123!",
+                "GracePlayer",
+                "TAG4",
+                "device-1",
+                "Desktop",
+                "127.0.0.1"
+        ));
+
+        String firstRefreshToken = reg.tokens().refreshToken();
+        authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(firstRefreshToken, "127.0.0.1"));
+
+        tokenProvider.lastCapturedPlayerTag = null;
+
+        // Replay previous token within grace window (network retry simulation)
+        authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(firstRefreshToken, "127.0.0.1"));
+
+        assertThat(tokenProvider.lastCapturedPlayerTag).isEqualTo("GracePlayer#TAG4");
+    }
+
+    @Test
+    void shouldLoginAndRefreshWithoutPlayerTagWhenProfileDoesNotExist() {
+        UUID accountId = UUID.randomUUID();
+        Account account = Account.createNew(
+                accountId,
+                Email.of("no_profile@ordago.dev"),
+                PasswordHash.of(passwordEncoder.encode("Password123!"))
+        );
+        accountRepository.save(account);
+
+        tokenProvider.lastCapturedPlayerTag = "previous_value";
+
+        AuthResult loginResult = authService.login(new LoginUseCase.LoginCommand(
+                "no_profile@ordago.dev",
+                "Password123!",
+                "device-1",
+                "Desktop",
+                "127.0.0.1"
+        ));
+
+        assertThat(loginResult).isNotNull();
+        assertThat(tokenProvider.lastCapturedPlayerTag).isNull();
+
+        tokenProvider.lastCapturedPlayerTag = "previous_value";
+
+        AuthTokens refreshResult = authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(
+                loginResult.tokens().refreshToken(),
+                "127.0.0.1"
+        ));
+
+        assertThat(refreshResult).isNotNull();
+        assertThat(tokenProvider.lastCapturedPlayerTag).isNull();
+
+        // Also verify grace window retry without profile
+        tokenProvider.lastCapturedPlayerTag = "previous_value";
+        AuthTokens graceTokens = authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(
+                loginResult.tokens().refreshToken(),
+                "127.0.0.1"
+        ));
+        assertThat(graceTokens).isNotNull();
+        assertThat(tokenProvider.lastCapturedPlayerTag).isNull();
+    }
+
+    @Test
+    void shouldRevokeSessionAndThrowInvalidCredentialsWhenAccountIsDeletedDuringRefreshToken() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "deleted_refresh@ordago.dev",
+                "Password123!",
+                "DeletedRefUser",
+                "01",
+                "dev-1",
+                "Desktop",
+                "127.0.0.1"
+        ));
+
+        Account account = accountRepository.findById(reg.account().getId()).orElseThrow();
+        account.softDelete();
+        accountRepository.save(account);
+
+        assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(
+                reg.tokens().refreshToken(),
+                "127.0.0.1"
+        ))).isInstanceOf(InvalidCredentialsException.class);
+
+        UserSession session = sessionRepository.findById(reg.session().getId()).orElseThrow();
+        assertThat(session.isRevoked()).isTrue();
+        assertThat(session.getRevocationReason()).isEqualTo("ACCOUNT_DELETED");
+    }
+
+    @Test
+    void shouldRevokeSessionAndThrowInvalidCredentialsWhenAccountIsDeletedDuringGraceWindowRefreshToken() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "deleted_grace@ordago.dev",
+                "Password123!",
+                "DelGraceUser",
+                "01",
+                "dev-1",
+                "Desktop",
+                "127.0.0.1"
+        ));
+
+        String firstRefreshToken = reg.tokens().refreshToken();
+        authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(firstRefreshToken, "127.0.0.1"));
+
+        Account account = accountRepository.findById(reg.account().getId()).orElseThrow();
+        account.softDelete();
+        accountRepository.save(account);
+
+        assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(
+                firstRefreshToken,
+                "127.0.0.1"
+        ))).isInstanceOf(InvalidCredentialsException.class);
+
+        UserSession session = sessionRepository.findById(reg.session().getId()).orElseThrow();
+        assertThat(session.isRevoked()).isTrue();
+        assertThat(session.getRevocationReason()).isEqualTo("ACCOUNT_DELETED");
+    }
+
+    @Test
+    void shouldRevokeSessionAndThrowAccountBannedWhenAccountIsBannedDuringRefreshToken() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "banned_refresh@ordago.dev",
+                "Password123!",
+                "BannedRefUser",
+                "01",
+                "dev-1",
+                "Desktop",
+                "127.0.0.1"
+        ));
+
+        Account account = accountRepository.findById(reg.account().getId()).orElseThrow();
+        Account bannedAccount = new Account(
+                account.getId(),
+                account.getEmail(),
+                account.getPasswordHash(),
+                account.isSystemAdmin(),
+                account.isEmailVerified(),
+                account.getEmailVerificationToken(),
+                account.getEmailVerificationExpiresAt(),
+                account.getPasswordResetToken(),
+                account.getPasswordResetExpiresAt(),
+                0,
+                null,
+                null,
+                null,
+                false,
+                null,
+                true,
+                Instant.now().plusSeconds(3600),
+                "Cheating detected",
+                account.getCreatedAt(),
+                account.getUpdatedAt(),
+                null
+        );
+        accountRepository.save(bannedAccount);
+
+        assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(
+                reg.tokens().refreshToken(),
+                "127.0.0.1"
+        )))
+                .isInstanceOf(AccountBannedException.class)
+                .satisfies(e -> assertThat(((AccountBannedException) e).getArgs()).contains("Cheating detected"));
+
+        UserSession session = sessionRepository.findById(reg.session().getId()).orElseThrow();
+        assertThat(session.isRevoked()).isTrue();
+        assertThat(session.getRevocationReason()).isEqualTo("ACCOUNT_BANNED");
+    }
+
+    @Test
+    void shouldRevokeSessionAndThrowAccountBannedWhenAccountIsBannedDuringGraceWindowRefreshToken() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "banned_grace@ordago.dev",
+                "Password123!",
+                "BanGraceUser",
+                "01",
+                "dev-1",
+                "Desktop",
+                "127.0.0.1"
+        ));
+
+        String firstRefreshToken = reg.tokens().refreshToken();
+        authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(firstRefreshToken, "127.0.0.1"));
+
+        Account account = accountRepository.findById(reg.account().getId()).orElseThrow();
+        Account bannedAccount = new Account(
+                account.getId(),
+                account.getEmail(),
+                account.getPasswordHash(),
+                account.isSystemAdmin(),
+                account.isEmailVerified(),
+                account.getEmailVerificationToken(),
+                account.getEmailVerificationExpiresAt(),
+                account.getPasswordResetToken(),
+                account.getPasswordResetExpiresAt(),
+                0,
+                null,
+                null,
+                null,
+                false,
+                null,
+                true,
+                Instant.now().plusSeconds(3600),
+                "Terms of service violation",
+                account.getCreatedAt(),
+                account.getUpdatedAt(),
+                null
+        );
+        accountRepository.save(bannedAccount);
+
+        assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(
+                firstRefreshToken,
+                "127.0.0.1"
+        )))
+                .isInstanceOf(AccountBannedException.class)
+                .satisfies(e -> assertThat(((AccountBannedException) e).getArgs()).contains("Terms of service violation"));
+
+        UserSession session = sessionRepository.findById(reg.session().getId()).orElseThrow();
+        assertThat(session.isRevoked()).isTrue();
+        assertThat(session.getRevocationReason()).isEqualTo("ACCOUNT_BANNED");
+    }
+
     // --- In-Memory Test Doubles ---
 
     private static class InMemoryAccountRepository implements AccountRepositoryPort {
@@ -1024,10 +1322,17 @@ class AuthServiceTest {
 
     private static class StubTokenProvider implements TokenProviderPort {
         private int counter = 0;
+        private String lastCapturedPlayerTag;
+
+        @Override
+        public String createAccessToken(Account account, UserSession session, String playerTag) {
+            this.lastCapturedPlayerTag = playerTag;
+            return "access-token-" + account.getId();
+        }
 
         @Override
         public String createAccessToken(Account account, UserSession session) {
-            return "access-token-" + account.getId();
+            return createAccessToken(account, session, null);
         }
 
         @Override
@@ -1048,6 +1353,31 @@ class AuthServiceTest {
         @Override
         public Duration getRefreshTokenLifespan() {
             return Duration.ofDays(30);
+        }
+    }
+
+    private static class StubGetUserProfileUseCase implements GetUserProfileUseCase {
+        private final Map<UUID, UserProfile> profiles;
+
+        StubGetUserProfileUseCase(Map<UUID, UserProfile> profiles) {
+            this.profiles = profiles;
+        }
+
+        @Override
+        public UserProfile getProfileById(UUID accountId) {
+            UserProfile profile = profiles.get(accountId);
+            if (profile == null) {
+                throw new UserProfileNotFoundException(accountId);
+            }
+            return profile;
+        }
+
+        @Override
+        public UserProfile getProfileByPlayerTag(String gameName, String tagLine) {
+            return profiles.values().stream()
+                    .filter(p -> p.getGameName().equalsIgnoreCase(gameName) && p.getTagLine().equalsIgnoreCase(tagLine))
+                    .findFirst()
+                    .orElse(null);
         }
     }
 

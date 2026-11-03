@@ -6,7 +6,11 @@ import dev.ordago.auth.domain.model.UserSession;
 
 public interface TokenProviderPort {
 
-    String createAccessToken(Account account, UserSession session);
+    String createAccessToken(Account account, UserSession session, String playerTag);
+
+    default String createAccessToken(Account account, UserSession session) {
+        return createAccessToken(account, session, null);
+    }
 
     String generateRefreshToken();
 

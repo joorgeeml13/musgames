@@ -43,7 +43,10 @@ import dev.ordago.auth.domain.port.out.TokenProviderPort;
 import dev.ordago.auth.domain.port.out.UserSessionRepositoryPort;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase;
 import dev.ordago.notification.domain.port.in.SendEmailUseCase.SendEmailCommand;
+import dev.ordago.profile.domain.exception.UserProfileNotFoundException;
+import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
+import dev.ordago.profile.domain.port.in.GetUserProfileUseCase;
 import dev.ordago.shared.domain.port.out.EventPublisherPort;
 
 @ApplicationScoped
@@ -68,6 +71,7 @@ public class AuthService implements
     private final PasswordEncoderPort passwordEncoder;
     private final TokenProviderPort tokenProvider;
     private final CreateUserProfileUseCase createUserProfileUseCase;
+    private final GetUserProfileUseCase getUserProfileUseCase;
     private final SendEmailUseCase sendEmailUseCase;
     private final EventPublisherPort eventPublisherPort;
 
@@ -83,6 +87,7 @@ public class AuthService implements
             PasswordEncoderPort passwordEncoder,
             TokenProviderPort tokenProvider,
             CreateUserProfileUseCase createUserProfileUseCase,
+            GetUserProfileUseCase getUserProfileUseCase,
             SendEmailUseCase sendEmailUseCase,
             EventPublisherPort eventPublisherPort,
             @ConfigProperty(name = "ordago.auth.lockout.max-attempts", defaultValue = "5") int maxFailedAttempts,
@@ -96,6 +101,7 @@ public class AuthService implements
         this.passwordEncoder = Objects.requireNonNull(passwordEncoder, "PasswordEncoderPort cannot be null");
         this.tokenProvider = Objects.requireNonNull(tokenProvider, "TokenProviderPort cannot be null");
         this.createUserProfileUseCase = Objects.requireNonNull(createUserProfileUseCase, "CreateUserProfileUseCase cannot be null");
+        this.getUserProfileUseCase = Objects.requireNonNull(getUserProfileUseCase, "GetUserProfileUseCase cannot be null");
         this.sendEmailUseCase = Objects.requireNonNull(sendEmailUseCase, "SendEmailUseCase cannot be null");
         this.eventPublisherPort = Objects.requireNonNull(eventPublisherPort, "EventPublisherPort cannot be null");
         this.maxFailedAttempts = maxFailedAttempts;
@@ -126,7 +132,7 @@ public class AuthService implements
             tagLine = generateDefaultTagLine();
         }
 
-        createUserProfileUseCase.createUserProfile(
+        UserProfile profile = createUserProfileUseCase.createUserProfile(
                 new CreateUserProfileUseCase.CreateProfileCommand(
                         accountId,
                         command.gameName(),
@@ -138,7 +144,8 @@ public class AuthService implements
         SessionWithToken sessionWithToken = createSession(accountId, command.deviceId(), command.deviceName());
         userSessionRepository.save(sessionWithToken.session());
 
-        String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session());
+        String playerTag = (profile != null && profile.getPlayerTag() != null) ? profile.getPlayerTag().formatted() : null;
+        String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session(), playerTag);
         AuthTokens tokens = AuthTokens.of(accessToken, sessionWithToken.plainRefreshToken(), tokenProvider.getAccessTokenLifespanSeconds());
 
         String language = (command.language() != null && !command.language().isBlank())
@@ -208,13 +215,18 @@ public class AuthService implements
         SessionWithToken sessionWithToken = createSession(account.getId(), command.deviceId(), command.deviceName());
         userSessionRepository.save(sessionWithToken.session());
 
-        String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session());
+        String playerTag = resolvePlayerTag(account.getId());
+        String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session(), playerTag);
         AuthTokens tokens = AuthTokens.of(accessToken, sessionWithToken.plainRefreshToken(), tokenProvider.getAccessTokenLifespanSeconds());
         return new AuthResult(account, sessionWithToken.session(), tokens);
     }
 
     @Override
-    @Transactional(dontRollbackOn = SessionRevokedException.class)
+    @Transactional(dontRollbackOn = {
+            SessionRevokedException.class,
+            InvalidCredentialsException.class,
+            AccountBannedException.class
+    })
     public AuthTokens refreshToken(RefreshTokenCommand command) {
         Objects.requireNonNull(command, "RefreshTokenCommand cannot be null");
         String incomingTokenHash = tokenProvider.hashToken(command.refreshToken());
@@ -255,7 +267,21 @@ public class AuthService implements
 
             Account account = accountRepository.findById(session.getAccountId())
                     .orElseThrow(InvalidCredentialsException::new);
-            String accessToken = tokenProvider.createAccessToken(account, session);
+
+            if (account.isDeleted()) {
+                session.revoke("ACCOUNT_DELETED");
+                userSessionRepository.save(session);
+                throw new InvalidCredentialsException();
+            }
+
+            if (account.isBanned()) {
+                session.revoke("ACCOUNT_BANNED");
+                userSessionRepository.save(session);
+                throw new AccountBannedException(account.getBanReason());
+            }
+
+            String playerTag = resolvePlayerTag(account.getId());
+            String accessToken = tokenProvider.createAccessToken(account, session, playerTag);
             return AuthTokens.of(accessToken, newRefreshToken, tokenProvider.getAccessTokenLifespanSeconds());
         }
 
@@ -267,7 +293,21 @@ public class AuthService implements
 
         Account account = accountRepository.findById(session.getAccountId())
                 .orElseThrow(InvalidCredentialsException::new);
-        String accessToken = tokenProvider.createAccessToken(account, session);
+
+        if (account.isDeleted()) {
+            session.revoke("ACCOUNT_DELETED");
+            userSessionRepository.save(session);
+            throw new InvalidCredentialsException();
+        }
+
+        if (account.isBanned()) {
+            session.revoke("ACCOUNT_BANNED");
+            userSessionRepository.save(session);
+            throw new AccountBannedException(account.getBanReason());
+        }
+
+        String playerTag = resolvePlayerTag(account.getId());
+        String accessToken = tokenProvider.createAccessToken(account, session, playerTag);
         return AuthTokens.of(accessToken, newRefreshToken, tokenProvider.getAccessTokenLifespanSeconds());
     }
 
@@ -460,5 +500,19 @@ public class AuthService implements
     private String generateDefaultTagLine() {
         int randomNum = java.util.concurrent.ThreadLocalRandom.current().nextInt(1000, 9999);
         return String.valueOf(randomNum);
+    }
+
+    private String resolvePlayerTag(UUID accountId) {
+        if (accountId == null) {
+            return null;
+        }
+        try {
+            UserProfile profile = getUserProfileUseCase.getProfileById(accountId);
+            return (profile != null && profile.getPlayerTag() != null)
+                    ? profile.getPlayerTag().formatted()
+                    : null;
+        } catch (UserProfileNotFoundException e) {
+            return null;
+        }
     }
 }

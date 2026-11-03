@@ -1,16 +1,23 @@
 package dev.ordago.auth.infrastructure.api;
 
-import io.quarkus.test.junit.QuarkusTest;
-import io.restassured.http.ContentType;
-import io.restassured.response.Response;
+import java.util.Base64;
+import java.util.Map;
+import java.util.UUID;
+import jakarta.inject.Inject;
+import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
-import java.util.Map;
-import jakarta.inject.Inject;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.http.ContentType;
+import io.restassured.response.Response;
+import io.smallrye.jwt.auth.principal.DefaultJWTParser;
 import dev.ordago.auth.infrastructure.persistence.AccountEntity;
 import dev.ordago.auth.infrastructure.persistence.AccountPanacheRepository;
+
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.equalTo;
@@ -23,9 +30,66 @@ class AuthResourceIT {
     @Inject
     AccountPanacheRepository accountPanacheRepository;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final DefaultJWTParser jwtParser = new DefaultJWTParser();
+
     private static String accessToken;
     private static String refreshToken;
     private static String previousRefreshToken;
+
+    private JsonNode decodeJwtPayload(String token) {
+        assertThat(token).as("JWT token must not be null or blank").isNotBlank();
+        String[] parts = token.split("\\.");
+        assertThat(parts).as("JWT token must consist of 3 parts (header.payload.signature)").hasSize(3);
+        byte[] payloadBytes = Base64.getUrlDecoder().decode(parts[1]);
+        try {
+            return objectMapper.readTree(payloadBytes);
+        } catch (Exception e) {
+            throw new AssertionError("Failed to parse JWT payload JSON", e);
+        }
+    }
+
+    private void assertEnrichedJwtClaims(String token, String expectedPlayerTag, boolean expectedEmailVerified) {
+        assertThat(token).as("JWT token must not be null or blank").isNotBlank();
+        JsonNode payload = decodeJwtPayload(token);
+
+        assertThat(payload.hasNonNull("playerTag"))
+                .as("JWT payload must contain non-null 'playerTag' claim").isTrue();
+        assertThat(payload.get("playerTag").isTextual())
+                .as("'playerTag' claim must be textual").isTrue();
+        assertThat(payload.get("playerTag").asText())
+                .as("'playerTag' claim must match expected player tag").isEqualTo(expectedPlayerTag);
+
+        assertThat(payload.hasNonNull("emailVerified"))
+                .as("JWT payload must contain non-null 'emailVerified' claim").isTrue();
+        assertThat(payload.get("emailVerified").isBoolean())
+                .as("'emailVerified' claim must be boolean").isTrue();
+        assertThat(payload.get("emailVerified").asBoolean())
+                .as("'emailVerified' claim must match expected boolean").isEqualTo(expectedEmailVerified);
+
+        assertThat(payload.hasNonNull("jti"))
+                .as("JWT payload must contain non-null 'jti' claim").isTrue();
+        assertThat(payload.get("jti").isTextual())
+                .as("'jti' claim must be textual").isTrue();
+        String jti = payload.get("jti").asText();
+        assertThat(jti).as("'jti' claim must not be blank").isNotBlank();
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                () -> UUID.fromString(jti),
+                "'jti' claim must be a valid UUID string: " + jti
+        );
+
+        try {
+            JsonWebToken jwt = jwtParser.parseOnly(token);
+            assertThat(jwt.getClaim("playerTag").toString().replace("\"", ""))
+                    .as("MP-JWT playerTag claim").isEqualTo(expectedPlayerTag);
+            assertThat(Boolean.parseBoolean(jwt.getClaim("emailVerified").toString()))
+                    .as("MP-JWT emailVerified claim").isEqualTo(expectedEmailVerified);
+            assertThat(jwt.getTokenID())
+                    .as("MP-JWT token ID (jti)").isEqualTo(jti);
+        } catch (Exception e) {
+            throw new AssertionError("Failed to parse token with DefaultJWTParser", e);
+        }
+    }
 
     @Test
     @Order(1)
@@ -57,6 +121,7 @@ class AuthResourceIT {
 
         accessToken = response.path("accessToken");
         refreshToken = response.path("refreshToken");
+        assertEnrichedJwtClaims(accessToken, "ITMusMaster#ESP", false);
     }
 
     @Test
@@ -176,6 +241,7 @@ class AuthResourceIT {
 
         accessToken = response.path("accessToken");
         refreshToken = response.path("refreshToken");
+        assertEnrichedJwtClaims(accessToken, "ITMusMaster#ESP", false);
     }
 
     @Test
@@ -241,6 +307,7 @@ class AuthResourceIT {
 
         accessToken = response.path("accessToken");
         refreshToken = response.path("refreshToken");
+        assertEnrichedJwtClaims(accessToken, "ITMusMaster#ESP", false);
     }
 
     @Test
@@ -264,6 +331,7 @@ class AuthResourceIT {
 
         accessToken = response.path("accessToken");
         refreshToken = response.path("refreshToken");
+        assertEnrichedJwtClaims(accessToken, "ITMusMaster#ESP", false);
     }
 
     @Test
@@ -430,6 +498,7 @@ class AuthResourceIT {
 
         accessToken = response.path("accessToken");
         assertThat(accessToken).isNotBlank();
+        assertEnrichedJwtClaims(accessToken, "ITMusMaster#ESP", true);
     }
 
     @Test

@@ -9,8 +9,10 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Set;
+import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import io.smallrye.jwt.build.Jwt;
+import io.smallrye.jwt.build.JwtClaimsBuilder;
 import jakarta.enterprise.context.ApplicationScoped;
 import dev.ordago.auth.domain.model.Account;
 import dev.ordago.auth.domain.model.UserSession;
@@ -36,12 +38,12 @@ public class SmallRyeJwtTokenProvider implements TokenProviderPort {
     }
 
     @Override
-    public String createAccessToken(Account account, UserSession session) {
+    public String createAccessToken(Account account, UserSession session, String playerTag) {
         Instant now = Instant.now();
         Instant expiresAt = now.plusSeconds(accessTokenLifespanSeconds);
         Set<String> roles = account.isSystemAdmin() ? Set.of("USER", "ADMIN") : Set.of("USER");
 
-        return Jwt.issuer(issuer)
+        JwtClaimsBuilder builder = Jwt.issuer(issuer)
                 .subject(account.getId().toString())
                 .upn(account.getEmail().value())
                 .groups(roles)
@@ -49,9 +51,21 @@ public class SmallRyeJwtTokenProvider implements TokenProviderPort {
                 .claim("deviceId", session.getDeviceId())
                 .claim("email", account.getEmail().value())
                 .claim("isAdmin", account.isSystemAdmin())
+                .claim("emailVerified", account.isEmailVerified())
+                .claim("jti", UUID.randomUUID().toString())
                 .issuedAt(now)
-                .expiresAt(expiresAt)
-                .sign();
+                .expiresAt(expiresAt);
+
+        if (playerTag != null && !playerTag.isBlank()) {
+            builder.claim("playerTag", playerTag);
+        }
+
+        return builder.sign();
+    }
+
+    @Override
+    public String createAccessToken(Account account, UserSession session) {
+        return createAccessToken(account, session, null);
     }
 
     @Override
