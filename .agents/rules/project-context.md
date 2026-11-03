@@ -11,6 +11,7 @@ always_on: true
 ## 2. Repository Layout (Monorepo)
 - `apps/backend/`: Quarkus 3 / Java 21 service (Maven, base package `dev.ordago`).
 - `apps/frontend/`: React 19 / TypeScript / Vite SPA (npm).
+- `apps/mailer/`: Go 1.22+ event-driven mailer microservice (RabbitMQ consumer, HTML templates, SMTP/SES).
 - `docker/`: Dev and prod Compose files.
 - `docs/`: Product and technical source-of-truth documents (see §4).
 - `.github/workflows/ci.yml`: The CI gate every change must pass.

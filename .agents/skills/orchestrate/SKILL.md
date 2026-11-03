@@ -34,7 +34,7 @@ Inspect the codebase with `read_file` and read-only `run_command` (`git status`,
 
 ### Phase 2: Scope Assessment & Task Partitioning
 Structure work into decoupled tracks:
-- **Required roles** from the specialist pool: `quarkus-dev`, `react-dev`, `dev-ops`, `tester-qa`, `security-audit` (definitions in `.agents/agents/<name>/AGENT.md`).
+- **Required roles** from the specialist pool: `quarkus-dev`, `react-dev`, `go-dev`, `dev-ops`, `tester-qa`, `security-audit` (definitions in `.agents/agents/<name>/AGENT.md`).
 - **Isolation per track:**
   - One worker in `apps/backend/` + one worker in `apps/frontend/` (+ one `dev-ops` in `docker/`/`.github/`): different directories and build outputs, so run them concurrently **in the integration branch, without worktrees**.
   - Two or more workers in the **same** project directory (e.g., 2x `quarkus-dev` in `apps/backend/`): each gets its own worktree, because they would share build outputs (`target/`, `node_modules/.tmp`) and git state.
