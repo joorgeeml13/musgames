@@ -1,5 +1,6 @@
 package dev.ordago.game.infrastructure.ws;
 
+import java.net.URI;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -10,7 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.quarkus.test.common.http.TestHTTPPort;
+import io.quarkus.test.common.http.TestHTTPResource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.smallrye.jwt.build.Jwt;
 import io.vertx.core.Vertx;
@@ -22,8 +23,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @QuarkusTest
 class GameRoomWebSocketEndpointIT {
 
-    @TestHTTPPort
-    int port;
+    @TestHTTPResource
+    URI baseUri;
 
     @Inject
     Vertx vertx;
@@ -58,7 +59,7 @@ class GameRoomWebSocketEndpointIT {
                 .sign();
 
         CompletableFuture<WebSocket> connectFuture = new CompletableFuture<>();
-        httpClient.webSocket(port, "localhost", "/ws/rooms/" + roomId, ar -> {
+        httpClient.webSocket(baseUri.getPort(), "localhost", "/ws/rooms/" + roomId, ar -> {
             if (ar.succeeded()) {
                 connectFuture.complete(ar.result());
             } else {
@@ -91,7 +92,7 @@ class GameRoomWebSocketEndpointIT {
         String roomId = "room-" + UUID.randomUUID();
 
         CompletableFuture<WebSocket> connectFuture = new CompletableFuture<>();
-        httpClient.webSocket(port, "localhost", "/ws/rooms/" + roomId, ar -> {
+        httpClient.webSocket(baseUri.getPort(), "localhost", "/ws/rooms/" + roomId, ar -> {
             if (ar.succeeded()) {
                 connectFuture.complete(ar.result());
             } else {
@@ -116,7 +117,7 @@ class GameRoomWebSocketEndpointIT {
         String roomId = "room-" + UUID.randomUUID();
 
         CompletableFuture<WebSocket> connectFuture = new CompletableFuture<>();
-        httpClient.webSocket(port, "localhost", "/ws/rooms/" + roomId, ar -> {
+        httpClient.webSocket(baseUri.getPort(), "localhost", "/ws/rooms/" + roomId, ar -> {
             if (ar.succeeded()) {
                 connectFuture.complete(ar.result());
             } else {
@@ -141,7 +142,7 @@ class GameRoomWebSocketEndpointIT {
         String roomId = "room-" + UUID.randomUUID();
 
         CompletableFuture<WebSocket> connectFuture = new CompletableFuture<>();
-        httpClient.webSocket(port, "localhost", "/ws/rooms/" + roomId, ar -> {
+        httpClient.webSocket(baseUri.getPort(), "localhost", "/ws/rooms/" + roomId, ar -> {
             if (ar.succeeded()) {
                 connectFuture.complete(ar.result());
             } else {

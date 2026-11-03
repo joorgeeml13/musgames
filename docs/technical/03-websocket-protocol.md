@@ -1,7 +1,47 @@
 # 03. Technical Specification — WebSocket Protocol & Network Contract
 
 **Módulo:** Comunicación en tiempo real (Backend WS <-> Frontend Services)  
-**Endpoint:** `/ws/rooms/{roomId}?token={JWT}`
+**Endpoint:** `/ws/rooms/{roomId}` *(Sin token en query param)*
+
+---
+
+## 0. Protocolo de Handshake y Autenticación Segura
+
+Por motivos de seguridad (evitar fuga de tokens JWT en logs de acceso de servidores, proxies inversos y URLs de navegador), la conexión WebSocket **no acepta tokens por Query Params** (`?token=...`).
+
+### Flujo de Conexión y Autenticación:
+1. **Conexión Abierta (`@OnOpen`):** Al establecer la conexión a `/ws/rooms/{roomId}`, el backend marca la sesión en `userData` como no autenticada (`ws.authenticated = false`) y arranca un temporizador estricto de **3 segundos** (`AUTH_TIMEOUT_MS = 3000L`).
+2. **Envío de Frame `AUTH`:** El cliente debe transmitir inmediatamente dentro del plazo de 3 segundos un frame de acción con su token JWT:
+   ```json
+   {
+     "action": "AUTH",
+     "token": "<JWT_ACCESS_TOKEN>"
+   }
+   ```
+3. **Validación Exitosa:**
+   - Si el JWT es válido y emitido por el emisor configurado (`https://mus.org/issuer`):
+     - El temporizador se cancela.
+     - La conexión se marca como autenticada (`ws.authenticated = true`).
+     - Se guardan los claims del usuario en `userData` (`accountId`, `playerTag`, `email`, `roomId`).
+     - El backend responde con el evento de confirmación `AUTH_SUCCESS`:
+       ```json
+       {
+         "event": "AUTH_SUCCESS",
+         "payload": {
+           "accountId": "a3bb189e-8bf9-3888-9912-ace4e6543002",
+           "playerTag": "Carlos#1001",
+           "roomId": "sala-norte-1"
+         }
+       }
+       ```
+4. **Rechazo y Cierre no Autorizado (Código 4401):**
+   - Si transcurren los **3 segundos** sin recibir un frame de autenticación válido.
+   - Si se envía cualquier frame con acción distinta a `AUTH` antes de estar autenticado.
+   - Si el token es inválido, malformado, vacío o ha expirado.
+   - Si el JSON recibido es inválido.
+   En cualquiera de estos casos, el backend cancela el temporizador y cierra inmediatamente la conexión con **código WebSocket `4401`** (`WS_CLOSE_UNAUTHORIZED`) y razón `"Unauthorized"`.
+
+---
 
 ## 1. Eventos Cliente -> Servidor (Comandos de Entrada)
 
