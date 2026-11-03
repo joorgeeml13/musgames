@@ -50,3 +50,8 @@ Dependency rules (non-negotiable):
 ## 5. Real-Time WebSockets (`quarkus-websockets-next`)
 - Endpoints mapped at `@WebSocket(path = "/ws/rooms/{roomId}")`.
 - Authenticate via JWT during handshake; reject invalid or expired tokens immediately with custom close code 4401.
+
+## 6. Two-Level Caching (L1 Caffeine + L2 Redis)
+- **Driven Port**: Any domain service requiring caching must depend strictly on `dev.ordago.shared.domain.port.out.CachePort`. Never inject `RedisDataSource` or `Caffeine` directly into application or domain layers.
+- **Fail-Safe Operation**: The caching tier is an optimization layer; application logic must continue operating gracefully via fallback computation if Redis or cache misses occur.
+- **Testing**: Cache infrastructure unit tests must avoid external Redis daemon dependencies; use lightweight stubs or dynamic proxies. DevServices for Redis are disabled in test profile (`%test.quarkus.redis.devservices.enabled=false`).

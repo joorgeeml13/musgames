@@ -19,6 +19,8 @@
 - **Tiempo Real:** quarkus-websockets-next para comunicación bidireccional de baja latencia en las salas de juego.
 - **API REST:** quarkus-rest-jackson para autenticación, perfiles, inventario de skins, rankings y matchmaking.
 - **Persistencia & Seguridad:** Hibernate ORM con Panache, PostgreSQL 16 y autenticación mediante JWT (quarkus-smallrye-jwt).
+- **Mensajería Reactiva:** SmallRye Reactive Messaging + RabbitMQ (exchange topic `ordago.events`) para eventos de dominio asíncronos.
+- **Caché Híbrida Multinivel:** L1 Caffeine (in-memory JVM sub-milisegundo) + L2 Redis 7 (distribuida entre réplicas) gestionada desacopladamente mediante `CachePort`.
 
 ## 2. Decisiones Arquitectónicas Clave
 
@@ -30,6 +32,11 @@ El lobby social y la mesa de juego conviven bajo el mismo origen (`dominio.com`)
 
 - **Durante la partida (Hot State):** Todo el estado de las manos de mus, mazos, apuestas, focos de mirada y temporizadores vive exclusivamente en la memoria RAM del nodo Quarkus dentro de un `RoomManager` (`ConcurrentHashMap<String, GameRoom>`). Esto garantiza latencia sub-milisegundo y evita saturar PostgreSQL con escrituras en cada cambio de foco o envite.
 - **Al finalizar la partida (Cold Persistence):** Solo cuando una pareja gana la vaca (3 juegos de 40 piedras), el servidor abre una transacción en base de datos para guardar el registro en `matches`, registrar `match_participants` y actualizar el `elo_rating` de los 4 jugadores.
+
+### C. Caché Híbrida de Dos Niveles (L1 Local Caffeine + L2 Distribuida Redis)
+
+- **Lecturas ultra-rápidas:** Entidades de lectura intensiva (perfiles públicos, rankings Elo, configuraciones globales) se sirven desde la memoria local del proceso (L1 Caffeine) sin sobrecarga de red.
+- **Consistencia horizontal:** La sincronización y persistencia compartida entre réplicas del backend se delega a Redis (L2). Ante caídas transitorias de Redis, el sistema degrada elegantemente a computación directa/base de datos sin interrumpir el servicio.
 
 ## 3. Flujo de Componentes
 
