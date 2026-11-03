@@ -165,3 +165,56 @@ CREATE INDEX idx_match_participants_user ON match_participants (user_id);
 | **Platino** | 1600 – 1799 | As de Bastos |
 | **Diamante** | 1800 – 1999 | Maestro de la Seña |
 | **Gran Maestro** | 2000+ | El Rey del Órdago |
+
+---
+
+## 4. Generación Atómica de PlayerTag y Prevención de Colisiones de TagLine
+
+### A. Contexto y Problemática
+
+El modelo de identidad pública de jugador se compone de un `PlayerTag` (`gameName#tagLine`, ej. `ManoMaestro#1024`). La base de datos impone unicidad absoluta e insensible a mayúsculas mediante el índice:
+
+```sql
+CREATE UNIQUE INDEX uq_user_profiles_player_tag ON user_profiles (LOWER(game_name), LOWER(tag_line));
+```
+
+Durante el registro (`/api/v1/auth/register`), el campo `tagLine` es opcional. El problema previo radicaba en que si el usuario no especificaba un `tagLine`, el sistema generaba un número pseudoaleatorio en `[1000..9999]`. Si dicho número ya existía para el `gameName` elegido (o si dos usuarios se registraban de forma concurrente con el mismo nombre y coincidían en el número generado), la transacción abortaba de forma inesperada con error `409 Conflict` (`PlayerTagAlreadyTakenException`), a pesar de que el usuario nunca eligió deliberadamente esa etiqueta.
+
+### B. Arquitectura de Resolución Atómica
+
+Para eliminar colisiones y garantizar que el registro con `tagLine` por defecto siempre tenga éxito, se implementó el método `calculateAvailableTagLine(String gameName)` estructurado en capas hexagonales:
+
+```mermaid
+flowchart TD
+    A["AuthService.register(command)"] --> B["PlayerTag.validateGameName(gameName)"]
+    B --> C["¿tagLine nulo o blanco?"]
+    C -- Sí --> D["CreateUserProfileUseCase.calculateAvailableTagLine(gameName)"]
+    C -- No --> E["Crear perfil con tagLine solicitado"]
+    D --> F["UserProfilePanacheRepository"]
+    F --> G["¿Es PostgreSQL? (JDBC Metadata Guard)"]
+    G -- Sí --> H["SELECT pg_advisory_xact_lock(hashtext(canonicalGameName))"]
+    G -- No --> I["Continuar sin lock (Entornos de Mock/Test)"]
+    H --> J["Cargar tags existentes para canonicalGameName"]
+    I --> J
+    J --> K["Fase 1: 50 intentos aleatorios [1000..9999]"]
+    K -- Disponible --> L["Retornar tagLine libre"]
+    K -- Colisión continua --> M["Fase 2: Barrido circular con offset [1000..9999]"]
+    M -- Disponible --> L
+    M -- 9000 tags tomados --> N["Fase 3: Escalado a 5 dígitos [10000..99999]"]
+    N -- Disponible --> L
+    N -- 99000 tags tomados --> O["throw PlayerTagCapacityExceededException (409)"]
+```
+
+### C. Mecanismos Clave de Seguridad y Concurrencia
+
+1. **Advisory Lock Transaccional en PostgreSQL (`pg_advisory_xact_lock`):**
+   - Se adquiere un bloqueo consultivo a nivel de transacción sobre el hash de 32 bits del nombre canónico: `hashtext(canonicalGameName)`.
+   - Serializa únicamente las transacciones concurrentes que intentan registrar o asignar etiquetas para el **mismo** `gameName`. Transacciones con distintos nombres operan en paralelo sin bloqueos.
+   - El lock se libera automáticamente al terminar la transacción (sea por `COMMIT` o `ROLLBACK`), eliminando fugas de bloqueos y deadlocks.
+2. **Protección Anti-Poisoning de Transacciones Hibernate:**
+   - La verificación `isPostgreSql()` inspecciona previamente los metadatos JDBC de la conexión antes de ejecutar SQL nativo. Esto previene que dialectos de testing en memoria (ej. H2) arrojen fallos de función nativa que marquen la sesión JPA como `rollback-only`.
+3. **Validación Temprana Fail-Fast:**
+   - `PlayerTag.validateGameName(command.gameName())` valida formato y longitud antes de hashear contraseñas mediante Argon2id, persistir cuentas o adquirir locks en la base de datos, mitigando vectores DoS por consumo de CPU y conexiones.
+4. **Manejo Controlado de Excepciones de Dominio:**
+   - En caso teórico de agotamiento de capacidad (99.000 usuarios con el mismo nombre), se emite `PlayerTagCapacityExceededException extends DomainException` mapped a HTTP 409 Conflict, en lugar de generar un error 500 no controlado.
+

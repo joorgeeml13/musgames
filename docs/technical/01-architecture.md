@@ -56,6 +56,11 @@ El lobby social y la mesa de juego conviven bajo el mismo origen (`dominio.com`)
 - **Identidad Extendida sin Consultas Extra:** Los tokens de acceso incorporan claims clave del jugador (`playerTag`, `emailVerified`, `jti`, `isAdmin`, `sessionId`, `deviceId`), permitiendo que endpoints REST y el handshake de WebSockets resuelvan la identidad y capacidades del jugador directamente desde el token criptográfico firmado con RS256.
 - **Detalles completos:** Ver [06-auth-cookie-transport.md](file:///home/jorge/.personal/musgames/docs/technical/06-auth-cookie-transport.md) §6.
 
+### G. Asignación Atómica de PlayerTag y Prevención de Colisiones
+
+- **Registro Libre de Colisiones Inesperadas:** Cuando el usuario no proporciona un `tagLine` en el registro, el sistema calcula de forma atómica una etiqueta disponible en `[1000..9999]` (con escalado a 5 dígitos si se satura) utilizando un PostgreSQL Advisory Lock por hash de nombre (`pg_advisory_xact_lock`), evitando errores 409 inesperados entre registros simultáneos.
+- **Detalles completos:** Ver [04-database-and-elo.md](file:///home/jorge/.personal/musgames/docs/technical/04-database-and-elo.md) §4.
+
 ## 3. Flujo de Componentes
 
 ```text
