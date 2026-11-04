@@ -1,5 +1,6 @@
 package dev.ordago.auth.infrastructure.api;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import org.eclipse.microprofile.jwt.JsonWebToken;
@@ -18,10 +19,14 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.CookieParam;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Cookie;
 import jakarta.ws.rs.core.MediaType;
@@ -31,6 +36,7 @@ import dev.ordago.auth.domain.model.Account;
 import dev.ordago.auth.domain.model.AuthTokens;
 import dev.ordago.auth.domain.port.in.ChangePasswordUseCase;
 import dev.ordago.auth.domain.port.in.GetCurrentAccountUseCase;
+import dev.ordago.auth.domain.port.in.GetUserSessionsUseCase;
 import dev.ordago.auth.domain.port.in.LoginUseCase;
 import dev.ordago.auth.domain.port.in.LogoutUseCase;
 import dev.ordago.auth.domain.port.in.RefreshTokenUseCase;
@@ -39,6 +45,7 @@ import dev.ordago.auth.domain.port.in.RegisterUseCase.AuthResult;
 import dev.ordago.auth.domain.port.in.RequestPasswordResetUseCase;
 import dev.ordago.auth.domain.port.in.ResendVerificationEmailUseCase;
 import dev.ordago.auth.domain.port.in.ResetPasswordUseCase;
+import dev.ordago.auth.domain.port.in.RevokeSessionUseCase;
 import dev.ordago.auth.domain.port.in.VerifyEmailUseCase;
 import dev.ordago.auth.infrastructure.api.dto.AuthResponse;
 import dev.ordago.auth.infrastructure.api.dto.ChangePasswordRequest;
@@ -51,6 +58,7 @@ import dev.ordago.auth.infrastructure.api.dto.ResendVerificationRequest;
 import dev.ordago.auth.infrastructure.api.dto.ResetPasswordRequest;
 import dev.ordago.auth.infrastructure.api.dto.TokenResponse;
 import dev.ordago.auth.infrastructure.api.dto.UserInfoResponse;
+import dev.ordago.auth.infrastructure.api.dto.UserSessionResponse;
 import dev.ordago.auth.infrastructure.api.dto.VerifyEmailRequest;
 import dev.ordago.auth.infrastructure.security.AuthCookieService;
 import dev.ordago.profile.domain.model.UserProfile;
@@ -70,6 +78,8 @@ public class AuthResource {
     private final LoginUseCase loginUseCase;
     private final RefreshTokenUseCase refreshTokenUseCase;
     private final LogoutUseCase logoutUseCase;
+    private final GetUserSessionsUseCase getUserSessionsUseCase;
+    private final RevokeSessionUseCase revokeSessionUseCase;
     private final GetCurrentAccountUseCase getCurrentAccountUseCase;
     private final GetUserProfileUseCase getUserProfileUseCase;
     private final VerifyEmailUseCase verifyEmailUseCase;
@@ -87,6 +97,8 @@ public class AuthResource {
             LoginUseCase loginUseCase,
             RefreshTokenUseCase refreshTokenUseCase,
             LogoutUseCase logoutUseCase,
+            GetUserSessionsUseCase getUserSessionsUseCase,
+            RevokeSessionUseCase revokeSessionUseCase,
             GetCurrentAccountUseCase getCurrentAccountUseCase,
             GetUserProfileUseCase getUserProfileUseCase,
             VerifyEmailUseCase verifyEmailUseCase,
@@ -103,6 +115,8 @@ public class AuthResource {
         this.loginUseCase = Objects.requireNonNull(loginUseCase, "LoginUseCase cannot be null");
         this.refreshTokenUseCase = Objects.requireNonNull(refreshTokenUseCase, "RefreshTokenUseCase cannot be null");
         this.logoutUseCase = Objects.requireNonNull(logoutUseCase, "LogoutUseCase cannot be null");
+        this.getUserSessionsUseCase = Objects.requireNonNull(getUserSessionsUseCase, "GetUserSessionsUseCase cannot be null");
+        this.revokeSessionUseCase = Objects.requireNonNull(revokeSessionUseCase, "RevokeSessionUseCase cannot be null");
         this.getCurrentAccountUseCase = Objects.requireNonNull(getCurrentAccountUseCase, "GetCurrentAccountUseCase cannot be null");
         this.getUserProfileUseCase = Objects.requireNonNull(getUserProfileUseCase, "GetUserProfileUseCase cannot be null");
         this.verifyEmailUseCase = Objects.requireNonNull(verifyEmailUseCase, "VerifyEmailUseCase cannot be null");
@@ -278,6 +292,79 @@ public class AuthResource {
             return objectMapper.readTree(rawBody).path("refreshToken").asText(null);
         } catch (Exception ignored) {
             return null;
+        }
+    }
+
+    @GET
+    @Path("/sessions")
+    @Authenticated
+    @SecurityRequirement(name = "jwtAuth")
+    @Operation(summary = "List active user sessions", description = "List all active device sessions for the authenticated user and identify the current device")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "200", description = "Active device sessions retrieved successfully",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = UserSessionResponse[].class))),
+            @APIResponse(responseCode = "401", description = "Unauthorized or expired token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response getActiveSessions() {
+        UUID accountId = extractAccountId();
+        UUID currentSessionId = extractSessionId();
+        List<UserSessionResponse> sessions = getUserSessionsUseCase.getActiveSessions(accountId)
+                .stream()
+                .map(session -> UserSessionResponse.of(session, currentSessionId))
+                .toList();
+        return Response.ok(sessions).build();
+    }
+
+    @DELETE
+    @Path("/sessions/{id}")
+    @Authenticated
+    @SecurityRequirement(name = "jwtAuth")
+    @Operation(summary = "Revoke specific user session", description = "Revokes a specific device session belonging to the authenticated user")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "204", description = "Session revoked successfully"),
+            @APIResponse(responseCode = "401", description = "Unauthorized or expired token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "404", description = "Session not found or belongs to another user",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response revokeSession(@PathParam("id") UUID sessionId) {
+        UUID accountId = extractAccountId();
+        UUID currentSessionId = extractSessionId();
+
+        revokeSessionUseCase.revokeSession(accountId, sessionId, "USER_MANUAL_REVOCATION");
+
+        Response.ResponseBuilder response = Response.noContent();
+        if (sessionId.equals(currentSessionId)) {
+            response.cookie(authCookieService.clearAccessTokenCookie(), authCookieService.clearRefreshTokenCookie());
+        }
+        return response.build();
+    }
+
+    @DELETE
+    @Path("/sessions")
+    @Authenticated
+    @SecurityRequirement(name = "jwtAuth")
+    @Operation(summary = "Revoke user sessions", description = "Revokes user device sessions with optional exclusion of current session")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "204", description = "Sessions revoked successfully"),
+            @APIResponse(responseCode = "401", description = "Unauthorized or expired token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response revokeSessions(
+            @QueryParam("exclude_current") @DefaultValue("false") boolean excludeCurrent
+    ) {
+        UUID accountId = extractAccountId();
+        UUID currentSessionId = extractSessionId();
+
+        if (excludeCurrent) {
+            revokeSessionUseCase.revokeOtherSessions(accountId, currentSessionId, "USER_REVOKED_OTHER_DEVICES");
+            return Response.noContent().build();
+        } else {
+            revokeSessionUseCase.revokeAllSessionsForAccount(accountId, "USER_REVOKED_ALL_DEVICES");
+            return Response.noContent()
+                    .cookie(authCookieService.clearAccessTokenCookie(), authCookieService.clearRefreshTokenCookie())
+                    .build();
         }
     }
 

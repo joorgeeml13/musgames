@@ -211,3 +211,60 @@ Los tokens de acceso JWT emitidos por `SmallRyeJwtTokenProvider` incorporan clai
   - Límite de cookies de navegadores (RFC 6265): **4.096 bytes** (el token consume ~25% del límite).
   - Límite de cabecera HTTP de Vert.x / Quarkus (`quarkus.http.limits.max-header-size`): **8.192 bytes** por defecto.
 - **Rendimiento:** Al contener `playerTag` y `emailVerified` directamente en el token verificado criptográficamente por la clave pública RS256, los endpoints y el WebSocket evitan lecturas de perfil o cuenta en caché/base de datos durante la negociación inicial y peticiones REST concurrentes.
+
+---
+
+## 7. API de Gestión de Sesiones Multidispositivo (Multi-Device Session API)
+
+Para proporcionar a los usuarios visibilidad y control sobre los dispositivos y navegadores que tienen acceso a su cuenta, se implementan los siguientes endpoints REST bajo `/api/v1/auth/sessions`:
+
+### A. Endpoints
+
+| Método | Endpoint | Parámetros | Respuestas | Descripción |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/v1/auth/sessions` | — | `200 OK`, `401 Unauthorized` | Lista todas las sesiones de dispositivo activas del usuario autenticado, identificando cuál corresponde al dispositivo emisor actual. |
+| `DELETE` | `/api/v1/auth/sessions/{id}` | `id` (UUID en Path) | `204 No Content`, `401 Unauthorized`, `404 Not Found` | Revoca una sesión de dispositivo específica por ID. Si corresponde a la sesión actual, destruye las cookies de autenticación (`Max-Age=0`). |
+| `DELETE` | `/api/v1/auth/sessions` | `exclude_current` (boolean QueryParam, default: `false`) | `204 No Content`, `401 Unauthorized` | Revoca sesiones masivamente. Si `exclude_current=true`, revoca todas las demás sesiones excepto la actual (manteniendo cookies). Si `false`, revoca todas las sesiones y destruye cookies. |
+
+### B. Especificación del DTO `UserSessionResponse`
+
+```json
+[
+  {
+    "id": "d9f8e7c6-b5a4-3210-fedc-ba9876543210",
+    "deviceId": "dev-laptop-macbook-pro",
+    "deviceName": "Chrome en macOS",
+    "createdAt": "2026-11-04T12:00:00Z",
+    "lastActiveAt": "2026-11-04T14:30:00Z",
+    "is_current": true,
+    "isCurrent": true
+  },
+  {
+    "id": "e8d7c6b5-a432-10fe-dcba-9876543210fe",
+    "deviceId": "dev-pixel-8-pro",
+    "deviceName": "Órdago Android App",
+    "createdAt": "2026-11-03T18:15:00Z",
+    "lastActiveAt": "2026-11-04T10:00:00Z",
+    "is_current": false,
+    "isCurrent": false
+  }
+]
+```
+
+> [!NOTE]
+> El campo booleano se expone tanto en formato snake_case (`is_current`) como camelCase (`isCurrent`) para compatibilidad fluida tanto con clientes web frontend como con librerías nativas móviles.
+
+### C. Defensas de Seguridad e Invariantes Arquitectónicos
+
+1. **Defensa contra IDOR (Insecure Direct Object Reference):**
+   - En `DELETE /api/v1/auth/sessions/{id}`, el caso de uso `RevokeSessionUseCase` valida rigurosamente que la sesión pertenezca al `accountId` del llamante autenticado (extraído del token JWT verificado).
+   - Si la sesión no existe o pertenece a otro usuario, la petición es rechazada con un código `404 Not Found` (evitando revelar la existencia de sesiones ajenas).
+
+2. **Gestión Determinista del Ciclo de Vida de Cookies:**
+   - **Revocación de la sesión actual (`sessionId == currentSessionId` o `exclude_current=false`):** La respuesta `204 No Content` incluye cabeceras `Set-Cookie` con `Max-Age=0` para `access_token` (`/`) y `refresh_token` (`/api/v1/auth`), obligando al navegador a purgar credenciales de inmediato.
+   - **Revocación remota de otros dispositivos (`exclude_current=true` o `sessionId != currentSessionId`):** No se envían cabeceras de eliminación de cookies, preservando la sesión activa del usuario en su dispositivo actual sin interrupciones.
+
+3. **Invalidación Criptográfica y Grace Window:**
+   - La revocación marca `isRevoked = true`, registra el timestamp `revokedAt` y el motivo de revocación (`USER_MANUAL_REVOCATION`, `USER_REVOKED_OTHER_DEVICES` o `USER_REVOKED_ALL_DEVICES`).
+   - Todo intento subsiguiente de rotación con un `refresh_token` asociado a una sesión revocada es rechazado inmediatamente con código HTTP `401 Unauthorized` (`SESSION_REVOKED`), frustrando sesiones zombi o robadas.
+

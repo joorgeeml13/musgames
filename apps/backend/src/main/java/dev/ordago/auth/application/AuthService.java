@@ -2,6 +2,7 @@ package dev.ordago.auth.application;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -15,6 +16,7 @@ import dev.ordago.auth.domain.exception.AccountLockedException;
 import dev.ordago.auth.domain.exception.EmailAlreadyExistsException;
 import dev.ordago.auth.domain.exception.InvalidCredentialsException;
 import dev.ordago.auth.domain.exception.InvalidPasswordResetTokenException;
+import dev.ordago.auth.domain.exception.InvalidRefreshTokenException;
 import dev.ordago.auth.domain.exception.InvalidVerificationTokenException;
 import dev.ordago.auth.domain.exception.PasswordResetTokenExpiredException;
 import dev.ordago.auth.domain.exception.SessionExpiredException;
@@ -28,6 +30,7 @@ import dev.ordago.auth.domain.model.PasswordHash;
 import dev.ordago.auth.domain.model.UserSession;
 import dev.ordago.auth.domain.port.in.ChangePasswordUseCase;
 import dev.ordago.auth.domain.port.in.GetCurrentAccountUseCase;
+import dev.ordago.auth.domain.port.in.GetUserSessionsUseCase;
 import dev.ordago.auth.domain.port.in.LoginUseCase;
 import dev.ordago.auth.domain.port.in.LogoutUseCase;
 import dev.ordago.auth.domain.port.in.RefreshTokenUseCase;
@@ -57,6 +60,7 @@ public class AuthService implements
         RefreshTokenUseCase,
         LogoutUseCase,
         RevokeSessionUseCase,
+        GetUserSessionsUseCase,
         GetCurrentAccountUseCase,
         VerifyEmailUseCase,
         ResendVerificationEmailUseCase,
@@ -234,7 +238,7 @@ public class AuthService implements
         String incomingTokenHash = tokenProvider.hashToken(command.refreshToken());
 
         UserSession session = userSessionRepository.findByCurrentOrPreviousTokenHash(incomingTokenHash)
-                .orElseThrow(SessionNotFoundException::new);
+                .orElseThrow(InvalidRefreshTokenException::new);
 
         if (session.isRevoked()) {
             throw new SessionRevokedException(session.getRevocationReason());
@@ -336,12 +340,46 @@ public class AuthService implements
 
     @Override
     @Transactional
+    public List<UserSession> getActiveSessions(UUID accountId) {
+        Objects.requireNonNull(accountId, "accountId cannot be null");
+        return userSessionRepository.findActiveByAccountId(accountId);
+    }
+
+    @Override
+    @Transactional
     public void revokeSession(UUID sessionId, String reason) {
         Objects.requireNonNull(sessionId, "sessionId cannot be null");
         userSessionRepository.findById(sessionId).ifPresent(session -> {
             session.revoke(reason != null ? reason : "ADMIN_REVOKED");
             userSessionRepository.save(session);
         });
+    }
+
+    @Override
+    @Transactional
+    public void revokeSession(UUID accountId, UUID sessionId, String reason) {
+        Objects.requireNonNull(accountId, "accountId cannot be null");
+        Objects.requireNonNull(sessionId, "sessionId cannot be null");
+        UserSession session = userSessionRepository.findById(sessionId)
+                .orElseThrow(SessionNotFoundException::new);
+        if (!session.getAccountId().equals(accountId)) {
+            throw new SessionNotFoundException();
+        }
+        session.revoke(reason != null ? reason : "USER_MANUAL_REVOCATION");
+        userSessionRepository.save(session);
+    }
+
+    @Override
+    @Transactional
+    public void revokeOtherSessions(UUID accountId, UUID excludedSessionId, String reason) {
+        Objects.requireNonNull(accountId, "accountId cannot be null");
+        Objects.requireNonNull(excludedSessionId, "excludedSessionId cannot be null");
+        userSessionRepository.revokeAllExcept(
+                accountId,
+                excludedSessionId,
+                reason != null ? reason : "USER_REVOKED_OTHER_DEVICES",
+                Instant.now()
+        );
     }
 
     @Override

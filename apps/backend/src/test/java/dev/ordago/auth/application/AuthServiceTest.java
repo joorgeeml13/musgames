@@ -21,6 +21,7 @@ import dev.ordago.auth.domain.exception.AccountLockedException;
 import dev.ordago.auth.domain.exception.EmailAlreadyExistsException;
 import dev.ordago.auth.domain.exception.InvalidCredentialsException;
 import dev.ordago.auth.domain.exception.InvalidPasswordResetTokenException;
+import dev.ordago.auth.domain.exception.InvalidRefreshTokenException;
 import dev.ordago.auth.domain.exception.InvalidVerificationTokenException;
 import dev.ordago.auth.domain.exception.PasswordResetTokenExpiredException;
 import dev.ordago.auth.domain.exception.SessionExpiredException;
@@ -538,7 +539,7 @@ class AuthServiceTest {
 
         // Invalidate previous token so it cannot be replayed again
         assertThatThrownBy(() -> authService.refreshToken(new RefreshTokenUseCase.RefreshTokenCommand(initialToken, "127.0.0.1")))
-                .isInstanceOf(SessionNotFoundException.class);
+                .isInstanceOf(InvalidRefreshTokenException.class);
     }
 
     @Test
@@ -1345,6 +1346,205 @@ class AuthServiceTest {
         assertThat(session.getRevocationReason()).isEqualTo("ACCOUNT_BANNED");
     }
 
+    @Test
+    void shouldReturnActiveSessionsForAccount() {
+        // Arrange
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "multi-session@ordago.dev",
+                "Password!",
+                "MultiUser",
+                "01",
+                "dev-phone",
+                "Pixel 8 Pro",
+                "127.0.0.1"
+        ));
+        UUID accountId = reg.account().getId();
+
+        authService.login(new LoginUseCase.LoginCommand(
+                "multi-session@ordago.dev",
+                "Password!",
+                "dev-laptop",
+                "MacBook Pro",
+                "127.0.0.1"
+        ));
+
+        // Act
+        List<UserSession> activeSessions = authService.getActiveSessions(accountId);
+
+        // Assert
+        assertThat(activeSessions).hasSize(2);
+        assertThat(activeSessions).extracting(UserSession::getDeviceId)
+                .containsExactlyInAnyOrder("dev-phone", "dev-laptop");
+
+        assertThatThrownBy(() -> authService.getActiveSessions(null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("accountId cannot be null");
+    }
+
+    @Test
+    void shouldRevokeSessionBelongingToAccount() {
+        // Arrange
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "revoke-single@ordago.dev",
+                "Password!",
+                "RevokeSingle",
+                "01",
+                "dev-tablet",
+                "iPad Air",
+                "127.0.0.1"
+        ));
+        UUID accountId = reg.account().getId();
+        UUID sessionId = reg.session().getId();
+
+        // Act
+        authService.revokeSession(accountId, sessionId, "USER_MANUAL_REVOCATION");
+
+        // Assert
+        UserSession revokedSession = sessionRepository.findById(sessionId).orElseThrow();
+        assertThat(revokedSession.isRevoked()).isTrue();
+        assertThat(revokedSession.getRevocationReason()).isEqualTo("USER_MANUAL_REVOCATION");
+        assertThat(revokedSession.getRevokedAt()).isNotNull();
+
+        assertThatThrownBy(() -> authService.revokeSession(null, sessionId, "REASON"))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> authService.revokeSession(accountId, null, "REASON"))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void shouldRejectRevokeSessionWhenAccountDoesNotMatchIdorDefense() {
+        // Arrange
+        RegisterUseCase.AuthResult user1 = authService.register(new RegisterUseCase.RegisterCommand(
+                "idor-user1@ordago.dev",
+                "Password!",
+                "IdorUserOne",
+                "01",
+                "dev-1",
+                "Device 1",
+                "127.0.0.1"
+        ));
+        RegisterUseCase.AuthResult user2 = authService.register(new RegisterUseCase.RegisterCommand(
+                "idor-user2@ordago.dev",
+                "Password!",
+                "IdorUserTwo",
+                "02",
+                "dev-2",
+                "Device 2",
+                "127.0.0.1"
+        ));
+
+        UUID user1Id = user1.account().getId();
+        UUID user2SessionId = user2.session().getId();
+
+        // Act & Assert - User 1 attempts IDOR revocation of User 2's session
+        assertThatThrownBy(() -> authService.revokeSession(user1Id, user2SessionId, "HACK"))
+                .isInstanceOf(SessionNotFoundException.class);
+
+        // Assert - User 2's session remains active
+        UserSession user2Session = sessionRepository.findById(user2SessionId).orElseThrow();
+        assertThat(user2Session.isRevoked()).isFalse();
+
+        // Act & Assert - Non-existent session throws SessionNotFoundException
+        assertThatThrownBy(() -> authService.revokeSession(user1Id, UUID.randomUUID(), "HACK"))
+                .isInstanceOf(SessionNotFoundException.class);
+    }
+
+    @Test
+    void shouldRevokeAllOtherSessionsExceptSpecifiedSession() {
+        // Arrange
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "revoke-others@ordago.dev",
+                "Password!",
+                "RevokeOthers",
+                "01",
+                "dev-phone",
+                "iPhone 15",
+                "127.0.0.1"
+        ));
+        UUID accountId = reg.account().getId();
+        UUID session1Id = reg.session().getId();
+
+        RegisterUseCase.AuthResult login2 = authService.login(new LoginUseCase.LoginCommand(
+                "revoke-others@ordago.dev",
+                "Password!",
+                "dev-laptop",
+                "MacBook Pro",
+                "127.0.0.1"
+        ));
+        UUID session2Id = login2.session().getId();
+
+        RegisterUseCase.AuthResult login3 = authService.login(new LoginUseCase.LoginCommand(
+                "revoke-others@ordago.dev",
+                "Password!",
+                "dev-tablet",
+                "iPad Pro",
+                "127.0.0.1"
+        ));
+        UUID session3Id = login3.session().getId();
+
+        // Act - Revoke all sessions except session 2 (current device)
+        authService.revokeOtherSessions(accountId, session2Id, "USER_REVOKED_OTHER_DEVICES");
+
+        // Assert
+        UserSession session1 = sessionRepository.findById(session1Id).orElseThrow();
+        UserSession session2 = sessionRepository.findById(session2Id).orElseThrow();
+        UserSession session3 = sessionRepository.findById(session3Id).orElseThrow();
+
+        assertThat(session1.isRevoked()).isTrue();
+        assertThat(session1.getRevocationReason()).isEqualTo("USER_REVOKED_OTHER_DEVICES");
+
+        assertThat(session3.isRevoked()).isTrue();
+        assertThat(session3.getRevocationReason()).isEqualTo("USER_REVOKED_OTHER_DEVICES");
+
+        assertThat(session2.isRevoked()).isFalse();
+
+        assertThatThrownBy(() -> authService.revokeOtherSessions(null, session2Id, "REASON"))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> authService.revokeOtherSessions(accountId, null, "REASON"))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void shouldRevokeAllSessionsForAccount() {
+        // Arrange
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "revoke-all@ordago.dev",
+                "Password!",
+                "RevokeAll",
+                "01",
+                "dev-phone",
+                "iPhone 15",
+                "127.0.0.1"
+        ));
+        UUID accountId = reg.account().getId();
+        UUID session1Id = reg.session().getId();
+
+        RegisterUseCase.AuthResult login2 = authService.login(new LoginUseCase.LoginCommand(
+                "revoke-all@ordago.dev",
+                "Password!",
+                "dev-laptop",
+                "MacBook Pro",
+                "127.0.0.1"
+        ));
+        UUID session2Id = login2.session().getId();
+
+        // Act
+        authService.revokeAllSessionsForAccount(accountId, "USER_REVOKED_ALL_DEVICES");
+
+        // Assert
+        UserSession session1 = sessionRepository.findById(session1Id).orElseThrow();
+        UserSession session2 = sessionRepository.findById(session2Id).orElseThrow();
+
+        assertThat(session1.isRevoked()).isTrue();
+        assertThat(session1.getRevocationReason()).isEqualTo("USER_REVOKED_ALL_DEVICES");
+
+        assertThat(session2.isRevoked()).isTrue();
+        assertThat(session2.getRevocationReason()).isEqualTo("USER_REVOKED_ALL_DEVICES");
+
+        assertThatThrownBy(() -> authService.revokeAllSessionsForAccount(null, "REASON"))
+                .isInstanceOf(NullPointerException.class);
+    }
+
     // --- In-Memory Test Doubles ---
 
     private static class InMemoryAccountRepository implements AccountRepositoryPort {
@@ -1434,6 +1634,13 @@ class AuthServiceTest {
         public void revokeAllForAccount(UUID accountId, String reason, Instant revokedAt) {
             sessions.values().stream()
                     .filter(s -> s.getAccountId().equals(accountId))
+                    .forEach(s -> s.revoke(reason));
+        }
+
+        @Override
+        public void revokeAllExcept(UUID accountId, UUID excludedSessionId, String reason, Instant revokedAt) {
+            sessions.values().stream()
+                    .filter(s -> s.getAccountId().equals(accountId) && !s.getId().equals(excludedSessionId) && !s.isRevoked())
                     .forEach(s -> s.revoke(reason));
         }
 

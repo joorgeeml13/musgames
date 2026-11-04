@@ -23,12 +23,17 @@ public class UserSessionPanacheRepository implements PanacheRepositoryBase<UserS
     }
 
     public List<UserSessionEntity> findActiveByAccountId(UUID accountId, Instant now) {
-        return find("accountId = ?1 and isRevoked = false and expiresAt > ?2", accountId, now).list();
+        return find("accountId = ?1 and isRevoked = false and expiresAt > ?2 order by lastRefreshedAt desc", accountId, now).list();
     }
 
     public void revokeAllForAccount(UUID accountId, String reason, Instant revokedAt) {
         update("isRevoked = true, revokedAt = ?1, revocationReason = ?2 where accountId = ?3 and isRevoked = false",
                 revokedAt, reason, accountId);
+    }
+
+    public void revokeAllExcept(UUID accountId, UUID excludedSessionId, String reason, Instant revokedAt) {
+        update("isRevoked = true, revokedAt = ?1, revocationReason = ?2 where accountId = ?3 and id != ?4 and isRevoked = false",
+                revokedAt, reason, accountId, excludedSessionId);
     }
 
     public int deleteRevokedOrExpiredOlderThan(Instant cutoff) {

@@ -185,5 +185,9 @@ class SessionHousekeepingServiceTest {
         @Override
         public void revokeAllForAccount(UUID accountId, String reason, Instant revokedAt) {
         }
+
+        @Override
+        public void revokeAllExcept(UUID accountId, UUID excludedSessionId, String reason, Instant revokedAt) {
+        }
     }
 }

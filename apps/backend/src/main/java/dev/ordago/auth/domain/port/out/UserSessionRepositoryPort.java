@@ -22,5 +22,7 @@ public interface UserSessionRepositoryPort {
 
     void revokeAllForAccount(UUID accountId, String reason, Instant revokedAt);
 
+    void revokeAllExcept(UUID accountId, UUID excludedSessionId, String reason, Instant revokedAt);
+
     int deleteRevokedOrExpiredOlderThan(Instant cutoff);
 }
