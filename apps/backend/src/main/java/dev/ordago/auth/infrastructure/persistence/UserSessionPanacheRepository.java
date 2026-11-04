@@ -30,4 +30,8 @@ public class UserSessionPanacheRepository implements PanacheRepositoryBase<UserS
         update("isRevoked = true, revokedAt = ?1, revocationReason = ?2 where accountId = ?3 and isRevoked = false",
                 revokedAt, reason, accountId);
     }
+
+    public int deleteRevokedOrExpiredOlderThan(Instant cutoff) {
+        return (int) delete("(isRevoked = true and (revokedAt < ?1 or (revokedAt is null and createdAt < ?1))) or (expiresAt < ?1)", cutoff);
+    }
 }

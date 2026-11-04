@@ -29,7 +29,7 @@ class FlywayMigrationIT {
     DataSource dataSource;
 
     @Test
-    @DisplayName("Flyway migrations should be applied successfully with version 1.0.0")
+    @DisplayName("Flyway migrations should be applied successfully with latest version 1.0.1")
     void shouldApplyFlywayMigrationsSuccessfully() {
         // Arrange & Act
         MigrationInfo current = flyway.info().current();
@@ -43,19 +43,25 @@ class FlywayMigrationIT {
                 .as("Current migration version should not be null")
                 .isNotNull();
         assertThat(current.getVersion().getVersion())
-                .as("Current migration version must be 1.0.0")
-                .isEqualTo("1.0.0");
+                .as("Current migration version must be 1.0.1")
+                .isEqualTo("1.0.1");
         assertThat(current.getState())
                 .as("Current migration state should be SUCCESS")
                 .isEqualTo(MigrationState.SUCCESS);
 
         assertThat(applied)
-                .as("Applied migrations array should contain exactly 1 migration")
-                .hasSize(1);
+                .as("Applied migrations array should contain exactly 2 migrations")
+                .hasSize(2);
         assertThat(applied[0].getVersion().getVersion())
                 .as("Applied migration version should be 1.0.0")
                 .isEqualTo("1.0.0");
         assertThat(applied[0].getState())
+                .as("Applied migration state should be SUCCESS")
+                .isEqualTo(MigrationState.SUCCESS);
+        assertThat(applied[1].getVersion().getVersion())
+                .as("Applied migration version should be 1.0.1")
+                .isEqualTo("1.0.1");
+        assertThat(applied[1].getState())
                 .as("Applied migration state should be SUCCESS")
                 .isEqualTo(MigrationState.SUCCESS);
     }

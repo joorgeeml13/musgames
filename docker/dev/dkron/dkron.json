@@ -1,0 +1,7 @@
+{
+  "server": true,
+  "bootstrap-expect": 1,
+  "node-name": "mus-dkron-dev",
+  "data-dir": "/dkron.data",
+  "log-level": "info"
+}

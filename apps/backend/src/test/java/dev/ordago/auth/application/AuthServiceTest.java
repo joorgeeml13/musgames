@@ -1436,6 +1436,17 @@ class AuthServiceTest {
                     .filter(s -> s.getAccountId().equals(accountId))
                     .forEach(s -> s.revoke(reason));
         }
+
+        @Override
+        public int deleteRevokedOrExpiredOlderThan(Instant cutoff) {
+            List<UUID> toRemove = sessions.values().stream()
+                    .filter(s -> (s.isRevoked() && (s.getRevokedAt() != null ? s.getRevokedAt().isBefore(cutoff) : s.getCreatedAt().isBefore(cutoff)))
+                            || s.getExpiresAt().isBefore(cutoff))
+                    .map(UserSession::getId)
+                    .toList();
+            toRemove.forEach(sessions::remove);
+            return toRemove.size();
+        }
     }
 
     private static class StubPasswordEncoder implements PasswordEncoderPort {

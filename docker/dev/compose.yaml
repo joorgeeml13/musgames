@@ -86,6 +86,7 @@ services:
       QUARKUS_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-mus_dev_password_change_in_prod}
       QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY: validate
       JWT_SECRET: ${JWT_SECRET:-mus_super_secret_jwt_key_at_least_32_characters_long_for_security}
+      HOUSEKEEPING_API_KEY: ${HOUSEKEEPING_API_KEY:-ordago-dev-housekeeping-secret-key-32chars}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: ${RABBITMQ_USER:-mus_guest}
@@ -209,6 +210,53 @@ services:
     networks:
       - mus-network
 
+  dkron:
+    image: dkron/dkron:v3.2.6
+    container_name: mus-dkron-dev
+    restart: unless-stopped
+    command: ["agent", "--server", "--bootstrap-expect=1", "--node-name=mus-dkron-dev"]
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      DKRON_SERVER: "true"
+      HOUSEKEEPING_API_KEY: ${HOUSEKEEPING_API_KEY:-ordago-dev-housekeeping-secret-key-32chars}
+    ports:
+      - "127.0.0.1:${DKRON_PORT:-8998}:8998"
+    volumes:
+      - dkron_dev_data:/dkron.data
+      - ./dkron/dkron.json:/etc/dkron/dkron.json:ro
+    networks:
+      - mus-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8998/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  dkron-init:
+    image: curlimages/curl:8.10.1
+    container_name: mus-dkron-init-dev
+    restart: "no"
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      DKRON_HOST: dkron
+      DKRON_PORT: 8998
+      HOUSEKEEPING_API_KEY: ${HOUSEKEEPING_API_KEY:-ordago-dev-housekeeping-secret-key-32chars}
+    volumes:
+      - ./dkron:/opt/dkron:ro
+    entrypoint: ["/bin/sh", "/opt/dkron/init-jobs.sh"]
+    depends_on:
+      dkron:
+        condition: service_healthy
+    networks:
+      - mus-network
+
 volumes:
   postgres_dev_data:
   rabbitmq_dev_data:
@@ -218,6 +266,7 @@ volumes:
   grafana_dev_data:
   loki_dev_data:
   tempo_dev_data:
+  dkron_dev_data:
 
 networks:
   mus-network:

@@ -68,4 +68,9 @@ public class UserSessionRepositoryAdapter implements UserSessionRepositoryPort {
     public void revokeAllForAccount(UUID accountId, String reason, Instant revokedAt) {
         panacheRepository.revokeAllForAccount(accountId, reason, revokedAt);
     }
+
+    @Override
+    public int deleteRevokedOrExpiredOlderThan(Instant cutoff) {
+        return panacheRepository.deleteRevokedOrExpiredOlderThan(cutoff);
+    }
 }

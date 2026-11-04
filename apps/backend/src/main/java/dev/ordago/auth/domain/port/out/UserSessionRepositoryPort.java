@@ -21,4 +21,6 @@ public interface UserSessionRepositoryPort {
     List<UserSession> findActiveByAccountId(UUID accountId);
 
     void revokeAllForAccount(UUID accountId, String reason, Instant revokedAt);
+
+    int deleteRevokedOrExpiredOlderThan(Instant cutoff);
 }
