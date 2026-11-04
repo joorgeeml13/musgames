@@ -49,6 +49,14 @@ public class ApiError {
         this.details = details != null ? details : new ArrayList<>();
     }
 
+    public static ApiError of(String code, String message, String path) {
+        return new ApiError(429, "Too Many Requests", code, message, path, List.of());
+    }
+
+    public static ApiError of(int status, String error, String code, String message, String path) {
+        return new ApiError(status, error, code, message, path, List.of());
+    }
+
     public boolean isSuccess() {
         return success;
     }

@@ -66,6 +66,9 @@ import dev.ordago.profile.domain.port.in.GetUserProfileUseCase;
 import dev.ordago.shared.domain.exception.ValidationException;
 import dev.ordago.shared.infrastructure.api.response.ApiError;
 import dev.ordago.shared.infrastructure.i18n.RequestLanguageContext;
+import dev.ordago.shared.infrastructure.ratelimit.ClientIpResolver;
+import dev.ordago.shared.infrastructure.ratelimit.RateLimited;
+import dev.ordago.shared.infrastructure.ratelimit.RateLimitTier;
 
 @Path("/api/v1/auth")
 @Tag(name = "Authentication", description = "Operations for registration, login, token refresh and session lifecycle")
@@ -91,6 +94,7 @@ public class AuthResource {
     private final RequestLanguageContext languageContext;
     private final JsonWebToken jwt;
     private final ObjectMapper objectMapper;
+    private final ClientIpResolver clientIpResolver;
 
     public AuthResource(
             RegisterUseCase registerUseCase,
@@ -109,7 +113,8 @@ public class AuthResource {
             AuthCookieService authCookieService,
             RequestLanguageContext languageContext,
             JsonWebToken jwt,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ClientIpResolver clientIpResolver
     ) {
         this.registerUseCase = Objects.requireNonNull(registerUseCase, "RegisterUseCase cannot be null");
         this.loginUseCase = Objects.requireNonNull(loginUseCase, "LoginUseCase cannot be null");
@@ -128,10 +133,12 @@ public class AuthResource {
         this.languageContext = Objects.requireNonNull(languageContext, "RequestLanguageContext cannot be null");
         this.jwt = Objects.requireNonNull(jwt, "JsonWebToken cannot be null");
         this.objectMapper = Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
+        this.clientIpResolver = Objects.requireNonNull(clientIpResolver, "ClientIpResolver cannot be null");
     }
 
     @POST
     @Path("/register")
+    @RateLimited(RateLimitTier.REGISTER)
     @Operation(summary = "Register a new player account", description = "Creates a new player account and initializes their profile with a player tag")
     @APIResponses(value = {
             @APIResponse(responseCode = "201", description = "Account created successfully",
@@ -174,6 +181,7 @@ public class AuthResource {
 
     @POST
     @Path("/login")
+    @RateLimited(RateLimitTier.LOGIN)
     @Operation(summary = "Authenticate user", description = "Verifies credentials, records active device session, and returns JWT access and refresh tokens")
     @APIResponses(value = {
             @APIResponse(responseCode = "200", description = "Authentication successful",
@@ -211,6 +219,7 @@ public class AuthResource {
 
     @POST
     @Path("/refresh")
+    @RateLimited(RateLimitTier.REFRESH)
     @Consumes({MediaType.APPLICATION_JSON, MediaType.WILDCARD})
     @Operation(summary = "Refresh access token", description = "Rotates refresh token and issues a new JWT access token")
     @APIResponses(value = {
@@ -401,6 +410,7 @@ public class AuthResource {
 
     @POST
     @Path("/resend-verification")
+    @RateLimited(RateLimitTier.RESEND_VERIFICATION)
     @Operation(summary = "Resend verification email", description = "Sends a new verification token to the user's email if the account exists and is not verified")
     @APIResponses(value = {
             @APIResponse(responseCode = "204", description = "Verification email sent if account exists and is unverified"),
@@ -417,6 +427,7 @@ public class AuthResource {
 
     @POST
     @Path("/forgot-password")
+    @RateLimited(RateLimitTier.PASSWORD_RESET)
     @Operation(summary = "Request password reset", description = "Generates a password reset token and sends a reset email if the account exists and is active")
     @APIResponses(value = {
             @APIResponse(responseCode = "204", description = "Password reset instructions sent if account exists and is active"),
@@ -465,20 +476,7 @@ public class AuthResource {
     }
 
     private String extractClientIp(HttpServerRequest httpRequest) {
-        if (httpRequest == null) {
-            return "127.0.0.1";
-        }
-        String ip = null;
-        String forwarded = httpRequest.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            ip = forwarded.split(",")[0].trim();
-        } else if (httpRequest.remoteAddress() != null) {
-            ip = httpRequest.remoteAddress().host();
-        }
-        if (ip == null || ip.isBlank()) {
-            return "127.0.0.1";
-        }
-        return ip.length() > 45 ? ip.substring(0, 45) : ip;
+        return clientIpResolver.resolve(httpRequest);
     }
 
     private UUID extractAccountId() {
