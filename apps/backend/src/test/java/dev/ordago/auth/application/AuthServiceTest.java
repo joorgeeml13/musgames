@@ -676,6 +676,25 @@ class AuthServiceTest {
     }
 
     @Test
+    void shouldLogoutUsingOnlySessionId() {
+        RegisterUseCase.AuthResult reg = authService.register(new RegisterUseCase.RegisterCommand(
+                "logout_session@ordago.dev",
+                "Password!",
+                "LogoutSessionUser",
+                "01",
+                "dev-1",
+                "PC",
+                "127.0.0.1"
+        ));
+
+        authService.logout(new LogoutUseCase.LogoutCommand(null, reg.session().getId()));
+
+        UserSession session = sessionRepository.findById(reg.session().getId()).orElseThrow();
+        assertThat(session.isRevoked()).isTrue();
+        assertThat(session.getRevocationReason()).isEqualTo("USER_LOGOUT");
+    }
+
+    @Test
     void shouldEmitVerificationEmailOnRegistration() {
         sendEmailUseCase.sentEmails.clear();
 

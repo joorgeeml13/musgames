@@ -94,8 +94,9 @@ sequenceDiagram
   - Si la cookie no existe, utiliza `request.refreshToken()` del cuerpo JSON.
   - Al rotar el token, emite nuevas cookies `Set-Cookie` actualizadas y devuelve `TokenResponse` en el body.
 - **`/logout` y `/change-password`:**
-  - Invalida la sesión activa o especificada en base de datos.
-  - Emite cookies con `Max-Age=0` y valor vacío para ordenar al navegador su destrucción inmediata.
+  - Requieren autenticación obligatoria (`@Authenticated` y `@SecurityRequirement(name = "jwtAuth")`), ya sea por cookie `access_token` o header `Authorization: Bearer <token>`.
+  - En `/logout`, se extrae el claim `sessionId` del JWT y se invalida la sesión activa en base de datos (`USER_LOGOUT`). Opcionalmente admite `refreshToken` en cookie o body para invalidación redundante.
+  - Emite cookies con `Max-Age=0` y valor vacío para ordenar al navegador su destrucción inmediata (`access_token` en `/` y `refresh_token` en `/api/v1/auth`).
 
 ```mermaid
 sequenceDiagram
@@ -105,8 +106,9 @@ sequenceDiagram
     participant Service as AuthService
     participant CookieSvc as AuthCookieService
 
-    Cliente->>AuthAPI: POST /api/v1/auth/logout [Cookie o Body]
-    AuthAPI->>Service: logout(command)
+    Cliente->>AuthAPI: POST /api/v1/auth/logout [Bearer JWT o access_token Cookie]
+    Note over AuthAPI: Extrae sessionId del JWT (@Authenticated)
+    AuthAPI->>Service: logout(sessionId, refreshToken)
     AuthAPI->>CookieSvc: clearAccessTokenCookie()
     AuthAPI->>CookieSvc: clearRefreshTokenCookie()
     AuthAPI-->>Cliente: HTTP 204 No Content<br/>Set-Cookie: access_token=; Max-Age=0; Path=/<br/>Set-Cookie: refresh_token=; Max-Age=0; Path=/api/v1/auth

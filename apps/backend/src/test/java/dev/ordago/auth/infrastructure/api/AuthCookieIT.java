@@ -438,10 +438,12 @@ class AuthCookieIT {
             // Arrange
             Map<String, Object> payload = buildRegisterPayload("logout_cookie");
             Response regResponse = register(payload).then().statusCode(201).extract().response();
+            String accessToken = regResponse.path("accessToken");
             String refreshToken = regResponse.path("refreshToken");
 
             // Act
             Response response = given()
+                    .cookie(ACCESS_COOKIE_NAME, accessToken)
                     .cookie(REFRESH_COOKIE_NAME, refreshToken)
                     .contentType(ContentType.JSON)
                     .body("{}")
@@ -491,10 +493,12 @@ class AuthCookieIT {
             // Arrange
             Map<String, Object> payload = buildRegisterPayload("logout_body");
             Response regResponse = register(payload).then().statusCode(201).extract().response();
+            String accessToken = regResponse.path("accessToken");
             String refreshToken = regResponse.path("refreshToken");
 
             // Act
             Response response = given()
+                    .header("Authorization", "Bearer " + accessToken)
                     .contentType(ContentType.JSON)
                     .body(Map.of("refreshToken", refreshToken))
                     .when()
@@ -513,6 +517,55 @@ class AuthCookieIT {
             assertThat(refreshCookie.getMaxAge()).isEqualTo(0);
 
             // Assert - Token is revoked in database
+            given()
+                    .contentType(ContentType.JSON)
+                    .body(Map.of("refreshToken", refreshToken))
+                    .when()
+                    .post("/api/v1/auth/refresh")
+                    .then()
+                    .statusCode(401);
+        }
+
+        @Test
+        @DisplayName("Logout fails (401) without authentication")
+        void shouldFailLogoutWithoutAuthentication() {
+            given()
+                    .contentType(ContentType.JSON)
+                    .body("{}")
+                    .when()
+                    .post("/api/v1/auth/logout")
+                    .then()
+                    .statusCode(401);
+        }
+
+        @Test
+        @DisplayName("Logout via Bearer header without body invalidates session via JWT sessionId and clears cookies")
+        void shouldRevokeSessionViaJwtSessionIdWithoutBody() {
+            // Arrange
+            Map<String, Object> payload = buildRegisterPayload("logout_jwt_session");
+            Response regResponse = register(payload).then().statusCode(201).extract().response();
+            String accessToken = regResponse.path("accessToken");
+            String refreshToken = regResponse.path("refreshToken");
+
+            // Act - Calling logout with ONLY Authorization header, NO body, NO refresh_token cookie
+            Response response = given()
+                    .header("Authorization", "Bearer " + accessToken)
+                    .when()
+                    .post("/api/v1/auth/logout")
+                    .then()
+                    .statusCode(204)
+                    .extract().response();
+
+            // Assert - Cookies cleared
+            Cookie accessCookie = response.getDetailedCookie(ACCESS_COOKIE_NAME);
+            assertThat(accessCookie).isNotNull();
+            assertThat(accessCookie.getMaxAge()).isEqualTo(0);
+
+            Cookie refreshCookie = response.getDetailedCookie(REFRESH_COOKIE_NAME);
+            assertThat(refreshCookie).isNotNull();
+            assertThat(refreshCookie.getMaxAge()).isEqualTo(0);
+
+            // Assert - Invalidation verified: refresh with the session's refresh token returns 401
             given()
                     .contentType(ContentType.JSON)
                     .body(Map.of("refreshToken", refreshToken))

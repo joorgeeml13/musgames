@@ -344,7 +344,18 @@ class AuthResourceIT {
                 "refreshToken", refreshToken
         );
 
+        // Without authentication -> 401 Unauthorized
         given()
+                .contentType(ContentType.JSON)
+                .body(logoutPayload)
+                .when()
+                .post("/api/v1/auth/logout")
+                .then()
+                .statusCode(401);
+
+        // With authentication -> 204 No Content
+        given()
+                .header("Authorization", "Bearer " + accessToken)
                 .contentType(ContentType.JSON)
                 .body(logoutPayload)
                 .when()

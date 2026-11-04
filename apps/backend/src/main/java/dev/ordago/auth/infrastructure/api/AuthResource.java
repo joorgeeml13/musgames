@@ -6,10 +6,12 @@ import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.media.Content;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
+import org.eclipse.microprofile.openapi.annotations.parameters.RequestBody;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
 import org.eclipse.microprofile.openapi.annotations.security.SecurityRequirement;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.security.Authenticated;
 import io.vertx.core.http.HttpServerRequest;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -78,6 +80,7 @@ public class AuthResource {
     private final AuthCookieService authCookieService;
     private final RequestLanguageContext languageContext;
     private final JsonWebToken jwt;
+    private final ObjectMapper objectMapper;
 
     public AuthResource(
             RegisterUseCase registerUseCase,
@@ -93,7 +96,8 @@ public class AuthResource {
             ChangePasswordUseCase changePasswordUseCase,
             AuthCookieService authCookieService,
             RequestLanguageContext languageContext,
-            JsonWebToken jwt
+            JsonWebToken jwt,
+            ObjectMapper objectMapper
     ) {
         this.registerUseCase = Objects.requireNonNull(registerUseCase, "RegisterUseCase cannot be null");
         this.loginUseCase = Objects.requireNonNull(loginUseCase, "LoginUseCase cannot be null");
@@ -109,6 +113,7 @@ public class AuthResource {
         this.authCookieService = Objects.requireNonNull(authCookieService, "AuthCookieService cannot be null");
         this.languageContext = Objects.requireNonNull(languageContext, "RequestLanguageContext cannot be null");
         this.jwt = Objects.requireNonNull(jwt, "JsonWebToken cannot be null");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "ObjectMapper cannot be null");
     }
 
     @POST
@@ -237,25 +242,43 @@ public class AuthResource {
 
     @POST
     @Path("/logout")
+    @Authenticated
+    @SecurityRequirement(name = "jwtAuth")
     @Consumes({MediaType.APPLICATION_JSON, MediaType.WILDCARD})
-    @Operation(summary = "Logout user", description = "Invalidates the active session or specified refresh token")
+    @Operation(summary = "Logout user", description = "Invalidates the active session associated with the JWT sessionId and clears authentication cookies")
     @APIResponses(value = {
-            @APIResponse(responseCode = "204", description = "Session invalidated successfully")
+            @APIResponse(responseCode = "204", description = "Session invalidated successfully"),
+            @APIResponse(responseCode = "401", description = "Unauthorized or expired token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
     })
     public Response logout(
             @CookieParam("refresh_token") Cookie refreshCookie,
-            LogoutRequest request
+            @RequestBody(description = "Optional logout payload for mobile fallback", required = false,
+                    content = @Content(schema = @Schema(implementation = LogoutRequest.class)))
+            String rawBody
     ) {
-        UUID sessionId = extractOptionalSessionId();
+        UUID sessionId = extractSessionId();
+        String bodyRefreshToken = extractRefreshTokenFromBody(rawBody);
         String refreshToken = authCookieService.extractRefreshToken(
                 refreshCookie,
-                request != null ? request.refreshToken() : null
+                bodyRefreshToken
         );
 
         logoutUseCase.logout(new LogoutUseCase.LogoutCommand(refreshToken, sessionId));
         return Response.noContent()
                 .cookie(authCookieService.clearAccessTokenCookie(), authCookieService.clearRefreshTokenCookie())
                 .build();
+    }
+
+    private String extractRefreshTokenFromBody(String rawBody) {
+        if (rawBody == null || rawBody.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(rawBody).path("refreshToken").asText(null);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     @GET
@@ -379,14 +402,11 @@ public class AuthResource {
         return UUID.fromString(subject);
     }
 
-    private UUID extractOptionalSessionId() {
-        try {
-            Object claim = jwt.getClaim("sessionId");
-            if (claim != null) {
-                return UUID.fromString(claim.toString());
-            }
-        } catch (Exception ignored) {
+    private UUID extractSessionId() {
+        Object claim = jwt.getClaim("sessionId");
+        if (claim == null || claim.toString().isBlank()) {
+            throw new IllegalStateException("Authenticated user sessionId claim is missing");
         }
-        return null;
+        return UUID.fromString(claim.toString());
     }
 }
