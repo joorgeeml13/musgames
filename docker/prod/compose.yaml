@@ -5,6 +5,8 @@ services:
     image: postgres:16-alpine
     container_name: mus-postgres-prod
     restart: always
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - path: ../../.env
         required: false
@@ -25,7 +27,7 @@ services:
       - mus-network
 
   rabbitmq:
-    image: rabbitmq:3.13-alpine
+    image: rabbitmq:3.13-management-alpine
     container_name: mus-rabbitmq-prod
     restart: always
     security_opt:
@@ -85,6 +87,8 @@ services:
       dockerfile: docker/prod/backend.Dockerfile
     container_name: mus-backend-prod
     restart: always
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - path: ../../.env
         required: false
@@ -97,14 +101,14 @@ services:
       QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY: validate
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET environment variable must be set in production}"
       HOUSEKEEPING_API_KEY: "${HOUSEKEEPING_API_KEY:?HOUSEKEEPING_API_KEY environment variable must be set in production}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://app.${DOMAIN_NAME:-ordago.es}}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: ${RABBITMQ_USER:-mus_user}
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD environment variable must be set in production}"
       REDIS_HOST: redis
       REDIS_PORT: 6379
-    ports:
-      - "${BACKEND_PORT:-8080}:8080"
+    # Security: Backend port is not published to host; accessible only via internal reverse proxy (Caddy)
     depends_on:
       postgres:
         condition: service_healthy
@@ -120,17 +124,46 @@ services:
       context: ../..
       dockerfile: docker/prod/frontend.Dockerfile
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
-        VITE_WS_BASE_URL: ${VITE_WS_BASE_URL:-ws://localhost:8080}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://api.${DOMAIN_NAME:-ordago.es}}
+        VITE_WS_BASE_URL: ${VITE_WS_BASE_URL:-wss://api.${DOMAIN_NAME:-ordago.es}}
     container_name: mus-frontend-prod
     restart: always
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - path: ../../.env
         required: false
-    ports:
-      - "${PROD_FRONTEND_PORT:-80}:80"
+    # Security: Frontend HTTP port is not published to host; routed exclusively via reverse proxy (Caddy)
     depends_on:
       - backend
+    networks:
+      - mus-network
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: mus-caddy-prod
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      DOMAIN_NAME: ${DOMAIN_NAME:-ordago.es}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@ordago.es}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-admin}
+      BASIC_AUTH_HASH: "${BASIC_AUTH_HASH:?BASIC_AUTH_HASH environment variable must be set in production}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
     networks:
       - mus-network
 
@@ -188,6 +221,8 @@ volumes:
   rabbitmq_prod_data:
   redis_prod_data:
   dkron_prod_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   mus-network:

@@ -1,0 +1,82 @@
+# ==============================================================================
+# Production Caddyfile — Reverse Proxy, TLS & Cloudflare Ingress for Órdago
+# ==============================================================================
+{
+	email {$ACME_EMAIL}
+}
+
+# --- Reusable Security Headers Snippet ---
+(security_headers) {
+	header {
+		# Enforce HTTPS across all subdomains with HSTS preload
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		# Prevent MIME-type sniffing
+		X-Content-Type-Options "nosniff"
+		# Defend against clickjacking framing attacks
+		X-Frame-Options "DENY"
+		# Referrer policy to prevent information leakage
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Omit Server identification banner (defer strips upstream server headers)
+		defer
+		-Server
+	}
+}
+
+# ------------------------------------------------------------------------------
+# 1. Apex Domain & WWW: Permanent 308 Redirection to Web App
+# ------------------------------------------------------------------------------
+{$DOMAIN_NAME}, www.{$DOMAIN_NAME} {
+	import security_headers
+	redir https://app.{$DOMAIN_NAME}{uri} permanent
+}
+
+# ------------------------------------------------------------------------------
+# 2. Web Application Frontend (React 19 SPA)
+# ------------------------------------------------------------------------------
+app.{$DOMAIN_NAME} {
+	import security_headers
+	reverse_proxy frontend:80
+}
+
+# ------------------------------------------------------------------------------
+# 3. REST API & Real-time WebSockets (Quarkus 3 Backend)
+# ------------------------------------------------------------------------------
+api.{$DOMAIN_NAME} {
+	import security_headers
+
+	# Reverse proxy to Quarkus backend (handles REST and /ws/* WebSockets natively)
+	# CRITICAL: Forward the authentic client IP from Cloudflare's CF-Connecting-IP
+	# into X-Forwarded-For so Bucket4j ClientIpResolver correctly enforces rate limits.
+	# Fallback to direct client IP if CF-Connecting-IP is absent.
+	@hasCf header Cf-Connecting-Ip *
+	reverse_proxy backend:8080 {
+		header_up @hasCf X-Forwarded-For {http.request.header.Cf-Connecting-Ip}
+		header_up !@hasCf X-Forwarded-For {client_ip}
+	}
+}
+
+# ------------------------------------------------------------------------------
+# 4. Administrative Panels (Secured via HTTP Basic Authentication)
+# ------------------------------------------------------------------------------
+
+# Dkron Distributed Cron Scheduler Web UI
+cron.{$DOMAIN_NAME}, dkron.{$DOMAIN_NAME} {
+	import security_headers
+
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	reverse_proxy dkron:8998
+}
+
+# RabbitMQ Management Web Interface
+rabbit.{$DOMAIN_NAME} {
+	import security_headers
+
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	reverse_proxy rabbitmq:15672
+}
