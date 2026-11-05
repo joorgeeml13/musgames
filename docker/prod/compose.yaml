@@ -101,6 +101,8 @@ services:
       QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY: validate
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET environment variable must be set in production}"
       HOUSEKEEPING_API_KEY: "${HOUSEKEEPING_API_KEY:?HOUSEKEEPING_API_KEY environment variable must be set in production}"
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://app.${DOMAIN_NAME:-ordago.es}}"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672

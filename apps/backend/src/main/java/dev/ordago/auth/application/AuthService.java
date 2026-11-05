@@ -7,8 +7,11 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ThreadLocalRandom;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import io.quarkus.arc.Arc;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.transaction.Transactional;
 import dev.ordago.auth.domain.event.TokenTheftDetectedEvent;
@@ -17,21 +20,26 @@ import dev.ordago.auth.domain.exception.AccountLockedException;
 import dev.ordago.auth.domain.exception.AccountNotGuestException;
 import dev.ordago.auth.domain.exception.EmailAlreadyExistsException;
 import dev.ordago.auth.domain.exception.InvalidCredentialsException;
+import dev.ordago.auth.domain.exception.InvalidOAuthTokenException;
 import dev.ordago.auth.domain.exception.InvalidPasswordResetTokenException;
 import dev.ordago.auth.domain.exception.InvalidRefreshTokenException;
 import dev.ordago.auth.domain.exception.InvalidVerificationTokenException;
+import dev.ordago.auth.domain.exception.OAuthIdentityAlreadyLinkedException;
 import dev.ordago.auth.domain.exception.PasswordResetTokenExpiredException;
 import dev.ordago.auth.domain.exception.SessionExpiredException;
 import dev.ordago.auth.domain.exception.SessionNotFoundException;
 import dev.ordago.auth.domain.exception.SessionRevokedException;
 import dev.ordago.auth.domain.exception.VerificationTokenExpiredException;
 import dev.ordago.auth.domain.model.Account;
+import dev.ordago.auth.domain.model.AccountIdentity;
 import dev.ordago.auth.domain.model.AuthTokens;
 import dev.ordago.auth.domain.model.Email;
+import dev.ordago.auth.domain.model.OAuthUserInfo;
 import dev.ordago.auth.domain.model.PasswordHash;
 import dev.ordago.auth.domain.model.UserSession;
 import dev.ordago.auth.domain.port.in.ChangePasswordUseCase;
 import dev.ordago.auth.domain.port.in.ClaimGuestAccountUseCase;
+import dev.ordago.auth.domain.port.in.ClaimGuestWithSocialUseCase;
 import dev.ordago.auth.domain.port.in.GetCurrentAccountUseCase;
 import dev.ordago.auth.domain.port.in.GetUserSessionsUseCase;
 import dev.ordago.auth.domain.port.in.GuestLoginUseCase;
@@ -44,8 +52,11 @@ import dev.ordago.auth.domain.port.in.RequestPasswordResetUseCase;
 import dev.ordago.auth.domain.port.in.ResendVerificationEmailUseCase;
 import dev.ordago.auth.domain.port.in.ResetPasswordUseCase;
 import dev.ordago.auth.domain.port.in.RevokeSessionUseCase;
+import dev.ordago.auth.domain.port.in.SocialLoginUseCase;
 import dev.ordago.auth.domain.port.in.VerifyEmailUseCase;
+import dev.ordago.auth.domain.port.out.AccountIdentityRepositoryPort;
 import dev.ordago.auth.domain.port.out.AccountRepositoryPort;
+import dev.ordago.auth.domain.port.out.OAuthVerifierPort;
 import dev.ordago.auth.domain.port.out.PasswordEncoderPort;
 import dev.ordago.auth.domain.port.out.TokenProviderPort;
 import dev.ordago.auth.domain.port.out.UserSessionRepositoryPort;
@@ -75,7 +86,9 @@ public class AuthService implements
         ChangePasswordUseCase,
         GuestLoginUseCase,
         ClaimGuestAccountUseCase,
-        PurgeExpiredGuestAccountsUseCase {
+        PurgeExpiredGuestAccountsUseCase,
+        SocialLoginUseCase,
+        ClaimGuestWithSocialUseCase {
 
     private static final String DUMMY_ARGON2_HASH =
             "$argon2id$v=19$m=65536,t=3,p=1$c29tZXNhbHQxMjM0NTY3OA$9S88u9pP7+h+K1lF8V9w2W2Vb5X3kZ6m0P1q2R3s4T4";
@@ -89,6 +102,8 @@ public class AuthService implements
     private final GetUserProfileUseCase getUserProfileUseCase;
     private final SendEmailUseCase sendEmailUseCase;
     private final EventPublisherPort eventPublisherPort;
+    private final AccountIdentityRepositoryPort accountIdentityRepository;
+    private final OAuthVerifierPort oauthVerifierPort;
 
     private final int maxFailedAttempts;
     private final Duration lockDuration;
@@ -105,6 +120,8 @@ public class AuthService implements
             GetUserProfileUseCase getUserProfileUseCase,
             SendEmailUseCase sendEmailUseCase,
             EventPublisherPort eventPublisherPort,
+            AccountIdentityRepositoryPort accountIdentityRepository,
+            OAuthVerifierPort oauthVerifierPort,
             @ConfigProperty(name = "ordago.auth.lockout.max-attempts", defaultValue = "5") int maxFailedAttempts,
             @ConfigProperty(name = "ordago.auth.lockout.duration-minutes", defaultValue = "15") int lockDurationMinutes,
             @ConfigProperty(name = "ordago.auth.refresh-token.grace-window-seconds", defaultValue = "30") int graceWindowSeconds,
@@ -119,6 +136,8 @@ public class AuthService implements
         this.getUserProfileUseCase = Objects.requireNonNull(getUserProfileUseCase, "GetUserProfileUseCase cannot be null");
         this.sendEmailUseCase = Objects.requireNonNull(sendEmailUseCase, "SendEmailUseCase cannot be null");
         this.eventPublisherPort = Objects.requireNonNull(eventPublisherPort, "EventPublisherPort cannot be null");
+        this.accountIdentityRepository = Objects.requireNonNull(accountIdentityRepository, "AccountIdentityRepositoryPort cannot be null");
+        this.oauthVerifierPort = Objects.requireNonNull(oauthVerifierPort, "OAuthVerifierPort cannot be null");
         this.maxFailedAttempts = maxFailedAttempts;
         this.lockDuration = Duration.ofMinutes(lockDurationMinutes);
         this.graceWindowSeconds = graceWindowSeconds;
@@ -654,6 +673,231 @@ public class AuthService implements
 
     private String generateDefaultTagLine(String gameName) {
         return createUserProfileUseCase.calculateAvailableTagLine(gameName);
+    }
+
+    private <T> T runInTransaction(Callable<T> action) {
+        if (Arc.container() != null) {
+            return QuarkusTransaction.requiringNew().call(action);
+        }
+        try {
+            return action.call();
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public AuthResult socialLogin(SocialLoginCommand command) {
+        Objects.requireNonNull(command, "SocialLoginCommand cannot be null");
+        OAuthUserInfo userInfo = oauthVerifierPort.verify(command.provider(), command.token());
+
+        if (userInfo.email() == null || userInfo.email().isBlank() || !userInfo.emailVerified()) {
+            throw new InvalidOAuthTokenException();
+        }
+
+        return runInTransaction(() -> executeSocialLogin(command, userInfo));
+    }
+
+    private AuthResult executeSocialLogin(SocialLoginCommand command, OAuthUserInfo userInfo) {
+        // 2. Check if identity already exists
+        Optional<AccountIdentity> identityOpt = accountIdentityRepository.findByProviderAndSubject(
+                command.provider(),
+                userInfo.providerSubject()
+        );
+
+        if (identityOpt.isPresent()) {
+            AccountIdentity identity = identityOpt.get();
+            Account account = accountRepository.findById(identity.accountId())
+                    .orElseThrow(InvalidCredentialsException::new);
+
+            if (account.isDeleted()) {
+                throw new InvalidCredentialsException();
+            }
+
+            if (account.isBanned()) {
+                throw new AccountBannedException(account.getBanReason());
+            }
+
+            account.recordSuccessfulLogin(command.clientIp());
+            accountRepository.save(account);
+
+            SessionWithToken sessionWithToken = createSession(account.getId(), command.deviceId(), command.deviceName());
+            userSessionRepository.save(sessionWithToken.session());
+
+            String playerTag = resolvePlayerTag(account.getId());
+            String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session(), playerTag);
+            AuthTokens tokens = AuthTokens.of(accessToken, sessionWithToken.plainRefreshToken(), tokenProvider.getAccessTokenLifespanSeconds());
+            return new AuthResult(account, sessionWithToken.session(), tokens);
+        }
+
+        // 3. Identity does not exist, but userInfo.email() matches an existing account
+        if (userInfo.email() != null && !userInfo.email().isBlank()) {
+            Optional<Account> existingAccountOpt = accountRepository.findByEmail(userInfo.email());
+            if (existingAccountOpt.isPresent()) {
+                Account account = existingAccountOpt.get();
+                if (account.isDeleted()) {
+                    throw new InvalidCredentialsException();
+                }
+                if (account.isBanned()) {
+                    throw new AccountBannedException(account.getBanReason());
+                }
+
+                AccountIdentity newIdentity = AccountIdentity.createNew(
+                        UUID.randomUUID(),
+                        account.getId(),
+                        command.provider(),
+                        userInfo.providerSubject(),
+                        userInfo.email(),
+                        Instant.now()
+                );
+                accountIdentityRepository.save(newIdentity);
+
+                if (!account.isEmailVerified() && userInfo.emailVerified()) {
+                    account.markEmailVerified();
+                }
+
+                account.recordSuccessfulLogin(command.clientIp());
+                accountRepository.save(account);
+
+                SessionWithToken sessionWithToken = createSession(account.getId(), command.deviceId(), command.deviceName());
+                userSessionRepository.save(sessionWithToken.session());
+
+                String playerTag = resolvePlayerTag(account.getId());
+                String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session(), playerTag);
+                AuthTokens tokens = AuthTokens.of(accessToken, sessionWithToken.plainRefreshToken(), tokenProvider.getAccessTokenLifespanSeconds());
+                return new AuthResult(account, sessionWithToken.session(), tokens);
+            }
+        }
+
+        // 4. Create new account, identity, user profile, and session
+        UUID accountId = UUID.randomUUID();
+        Account account = Account.createSocial(accountId, Email.of(userInfo.email()), Instant.now());
+        account.recordSuccessfulLogin(command.clientIp());
+        accountRepository.save(account);
+
+        AccountIdentity identity = AccountIdentity.createNew(
+                UUID.randomUUID(),
+                accountId,
+                command.provider(),
+                userInfo.providerSubject(),
+                userInfo.email(),
+                Instant.now()
+        );
+        accountIdentityRepository.save(identity);
+
+        String gameName = sanitizeGameName(userInfo.displayName());
+        String tagLine = createUserProfileUseCase.calculateAvailableTagLine(gameName);
+        UserProfile profile = createUserProfileUseCase.createUserProfile(
+                new CreateUserProfileUseCase.CreateProfileCommand(
+                        accountId,
+                        gameName,
+                        tagLine,
+                        "es-ES"
+                )
+        );
+
+        SessionWithToken sessionWithToken = createSession(accountId, command.deviceId(), command.deviceName());
+        userSessionRepository.save(sessionWithToken.session());
+
+        String playerTag = (profile != null && profile.getPlayerTag() != null) ? profile.getPlayerTag().formatted() : null;
+        String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session(), playerTag);
+        AuthTokens tokens = AuthTokens.of(accessToken, sessionWithToken.plainRefreshToken(), tokenProvider.getAccessTokenLifespanSeconds());
+        return new AuthResult(account, sessionWithToken.session(), tokens);
+    }
+
+    @Override
+    public AuthResult claimGuestWithSocial(ClaimGuestSocialCommand command) {
+        Objects.requireNonNull(command, "ClaimGuestSocialCommand cannot be null");
+        Objects.requireNonNull(command.guestAccountId(), "guestAccountId cannot be null");
+
+        OAuthUserInfo userInfo = oauthVerifierPort.verify(command.provider(), command.token());
+
+        if (userInfo.email() == null || userInfo.email().isBlank() || !userInfo.emailVerified()) {
+            throw new InvalidOAuthTokenException();
+        }
+
+        return runInTransaction(() -> executeClaimGuestWithSocial(command, userInfo));
+    }
+
+    private AuthResult executeClaimGuestWithSocial(ClaimGuestSocialCommand command, OAuthUserInfo userInfo) {
+        Account account = accountRepository.findById(command.guestAccountId())
+                .orElseThrow(InvalidCredentialsException::new);
+
+        if (account.isDeleted()) {
+            throw new InvalidCredentialsException();
+        }
+
+        if (account.isBanned()) {
+            throw new AccountBannedException(account.getBanReason());
+        }
+
+        // 1. Validate guest
+        if (!account.isGuest()) {
+            throw new AccountNotGuestException();
+        }
+
+        // 2. Verify provider identity not linked to another user
+        Optional<AccountIdentity> existingIdentity = accountIdentityRepository.findByProviderAndSubject(
+                command.provider(),
+                userInfo.providerSubject()
+        );
+        if (existingIdentity.isPresent()) {
+            throw new OAuthIdentityAlreadyLinkedException();
+        }
+
+        // 3. Verify email does not collide with another registered account
+        Optional<Account> existingAccountWithEmail = accountRepository.findByEmail(userInfo.email());
+        if (existingAccountWithEmail.isPresent() && !existingAccountWithEmail.get().getId().equals(account.getId())) {
+            throw new EmailAlreadyExistsException(userInfo.email());
+        }
+
+        // 4. Promote account to social
+        account.claimAsSocial(Email.of(userInfo.email()));
+        account.recordSuccessfulLogin(command.clientIp());
+        accountRepository.save(account);
+
+        // 5. Save new AccountIdentity
+        AccountIdentity identity = AccountIdentity.createNew(
+                UUID.randomUUID(),
+                account.getId(),
+                command.provider(),
+                userInfo.providerSubject(),
+                userInfo.email(),
+                Instant.now()
+        );
+        accountIdentityRepository.save(identity);
+
+        // 6. Revoke previous anonymous sessions, create new session and emit tokens
+        userSessionRepository.revokeAllForAccount(account.getId(), "Account claimed with social", Instant.now());
+
+        SessionWithToken sessionWithToken = createSession(account.getId(), command.deviceId(), command.deviceName());
+        userSessionRepository.save(sessionWithToken.session());
+
+        String playerTag = resolvePlayerTag(account.getId());
+        String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session(), playerTag);
+        AuthTokens tokens = AuthTokens.of(accessToken, sessionWithToken.plainRefreshToken(), tokenProvider.getAccessTokenLifespanSeconds());
+
+        return new AuthResult(account, sessionWithToken.session(), tokens);
+    }
+
+    private String sanitizeGameName(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return "Player";
+        }
+        String sanitized = displayName.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").trim();
+        sanitized = sanitized.replaceAll("\\s+", " ").trim();
+        if (sanitized.length() < 2) {
+            return "Player";
+        }
+        if (sanitized.length() > 24) {
+            sanitized = sanitized.substring(0, 24).trim();
+            if (sanitized.length() < 2) {
+                return "Player";
+            }
+        }
+        return sanitized;
     }
 
     private String resolvePlayerTag(UUID accountId) {

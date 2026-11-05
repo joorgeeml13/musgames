@@ -29,7 +29,7 @@ class FlywayMigrationIT {
     DataSource dataSource;
 
     @Test
-    @DisplayName("Flyway migrations should be applied successfully with latest version 1.0.1")
+    @DisplayName("Flyway migrations should be applied successfully with latest version 1.0.3")
     void shouldApplyFlywayMigrationsSuccessfully() {
         // Arrange & Act
         MigrationInfo current = flyway.info().current();
@@ -43,15 +43,15 @@ class FlywayMigrationIT {
                 .as("Current migration version should not be null")
                 .isNotNull();
         assertThat(current.getVersion().getVersion())
-                .as("Current migration version must be 1.0.1")
-                .isEqualTo("1.0.1");
+                .as("Current migration version must be 1.0.3")
+                .isEqualTo("1.0.3");
         assertThat(current.getState())
                 .as("Current migration state should be SUCCESS")
                 .isEqualTo(MigrationState.SUCCESS);
 
         assertThat(applied)
-                .as("Applied migrations array should contain exactly 2 migrations")
-                .hasSize(2);
+                .as("Applied migrations array should contain exactly 4 migrations")
+                .hasSize(4);
         assertThat(applied[0].getVersion().getVersion())
                 .as("Applied migration version should be 1.0.0")
                 .isEqualTo("1.0.0");
@@ -62,6 +62,18 @@ class FlywayMigrationIT {
                 .as("Applied migration version should be 1.0.1")
                 .isEqualTo("1.0.1");
         assertThat(applied[1].getState())
+                .as("Applied migration state should be SUCCESS")
+                .isEqualTo(MigrationState.SUCCESS);
+        assertThat(applied[2].getVersion().getVersion())
+                .as("Applied migration version should be 1.0.2")
+                .isEqualTo("1.0.2");
+        assertThat(applied[2].getState())
+                .as("Applied migration state should be SUCCESS")
+                .isEqualTo(MigrationState.SUCCESS);
+        assertThat(applied[3].getVersion().getVersion())
+                .as("Applied migration version should be 1.0.3")
+                .isEqualTo("1.0.3");
+        assertThat(applied[3].getState())
                 .as("Applied migration state should be SUCCESS")
                 .isEqualTo(MigrationState.SUCCESS);
     }
@@ -142,18 +154,62 @@ class FlywayMigrationIT {
             insertAccount(accountId, email, "passhash", now);
             insertUserProfile(accountId, "CascadeUser", "CAS1", now);
             insertUserSession(sessionId, accountId, "device-cas-1", "hash-" + UUID.randomUUID(), now);
+            insertAccountIdentity(UUID.randomUUID(), accountId, "GOOGLE", "sub-cas-1", email, now);
 
             assertThat(countRows("SELECT COUNT(*) FROM user_profiles WHERE id = ?", accountId)).isEqualTo(1);
             assertThat(countRows("SELECT COUNT(*) FROM user_sessions WHERE id = ?", sessionId)).isEqualTo(1);
+            assertThat(countRows("SELECT COUNT(*) FROM account_identities WHERE account_id = ?", accountId)).isEqualTo(1);
 
             // Act: delete the parent account
             deleteAccount(accountId);
 
-            // Assert: child records in user_profiles and user_sessions must be cascade-deleted
+            // Assert: child records in user_profiles, user_sessions, and account_identities must be cascade-deleted
             assertThat(countRows("SELECT COUNT(*) FROM user_profiles WHERE id = ?", accountId)).isEqualTo(0);
             assertThat(countRows("SELECT COUNT(*) FROM user_sessions WHERE id = ?", sessionId)).isEqualTo(0);
+            assertThat(countRows("SELECT COUNT(*) FROM account_identities WHERE account_id = ?", accountId)).isEqualTo(0);
         } finally {
             deleteAccount(accountId);
+        }
+    }
+
+    @Test
+    @DisplayName("Database should enforce UNIQUE constraint on account_identities(provider, provider_subject)")
+    void shouldEnforceUniqueProviderSubjectConstraintOnAccountIdentities() throws SQLException {
+        UUID accountId1 = UUID.randomUUID();
+        UUID accountId2 = UUID.randomUUID();
+        Instant now = Instant.now();
+
+        try {
+            insertAccount(accountId1, "oauth1-" + UUID.randomUUID() + "@ordago.dev", "hash1", now);
+            insertAccount(accountId2, "oauth2-" + UUID.randomUUID() + "@ordago.dev", "hash2", now);
+
+            String subject = "shared-subject-" + UUID.randomUUID();
+            insertAccountIdentity(UUID.randomUUID(), accountId1, "GOOGLE", subject, "user@gmail.com", now);
+
+            assertThatThrownBy(() -> insertAccountIdentity(UUID.randomUUID(), accountId2, "GOOGLE", subject, "user@gmail.com", now))
+                    .as("Inserting account identity with duplicate provider and subject must violate unique constraint")
+                    .isInstanceOf(SQLException.class);
+        } finally {
+            deleteAccount(accountId1);
+            deleteAccount(accountId2);
+        }
+    }
+
+    private void insertAccountIdentity(UUID id, UUID accountId, String provider, String subject, String email, Instant timestamp) throws SQLException {
+        String sql = """
+                INSERT INTO account_identities (id, account_id, provider, provider_subject, email, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """;
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, id);
+            ps.setObject(2, accountId);
+            ps.setString(3, provider);
+            ps.setString(4, subject);
+            ps.setString(5, email);
+            ps.setTimestamp(6, Timestamp.from(timestamp));
+            ps.setTimestamp(7, Timestamp.from(timestamp));
+            ps.executeUpdate();
         }
     }
 

@@ -35,8 +35,11 @@ import jakarta.ws.rs.core.NewCookie;
 import jakarta.ws.rs.core.Response;
 import dev.ordago.auth.domain.model.Account;
 import dev.ordago.auth.domain.model.AuthTokens;
+import dev.ordago.auth.domain.model.OAuthProvider;
 import dev.ordago.auth.domain.port.in.ChangePasswordUseCase;
 import dev.ordago.auth.domain.port.in.ClaimGuestAccountUseCase;
+import dev.ordago.auth.domain.port.in.ClaimGuestWithSocialUseCase;
+import dev.ordago.auth.domain.port.in.ClaimGuestWithSocialUseCase.ClaimGuestSocialCommand;
 import dev.ordago.auth.domain.port.in.GetCurrentAccountUseCase;
 import dev.ordago.auth.domain.port.in.GetUserSessionsUseCase;
 import dev.ordago.auth.domain.port.in.GuestLoginUseCase;
@@ -49,15 +52,19 @@ import dev.ordago.auth.domain.port.in.RequestPasswordResetUseCase;
 import dev.ordago.auth.domain.port.in.ResendVerificationEmailUseCase;
 import dev.ordago.auth.domain.port.in.ResetPasswordUseCase;
 import dev.ordago.auth.domain.port.in.RevokeSessionUseCase;
+import dev.ordago.auth.domain.port.in.SocialLoginUseCase;
+import dev.ordago.auth.domain.port.in.SocialLoginUseCase.SocialLoginCommand;
 import dev.ordago.auth.domain.port.in.VerifyEmailUseCase;
 import dev.ordago.auth.infrastructure.api.dto.AuthResponse;
 import dev.ordago.auth.infrastructure.api.dto.ChangePasswordRequest;
 import dev.ordago.auth.infrastructure.api.dto.ClaimGuestRequest;
+import dev.ordago.auth.infrastructure.api.dto.ClaimGuestSocialRequest;
 import dev.ordago.auth.infrastructure.api.dto.ForgotPasswordRequest;
 import dev.ordago.auth.infrastructure.api.dto.GuestLoginRequest;
 import dev.ordago.auth.infrastructure.api.dto.LoginRequest;
 import dev.ordago.auth.infrastructure.api.dto.LogoutRequest;
 import dev.ordago.auth.infrastructure.api.dto.RefreshTokenRequest;
+import dev.ordago.auth.infrastructure.api.dto.SocialLoginRequest;
 import dev.ordago.auth.infrastructure.api.dto.RegisterRequest;
 import dev.ordago.auth.infrastructure.api.dto.ResendVerificationRequest;
 import dev.ordago.auth.infrastructure.api.dto.ResetPasswordRequest;
@@ -97,6 +104,8 @@ public class AuthResource {
     private final ChangePasswordUseCase changePasswordUseCase;
     private final GuestLoginUseCase guestLoginUseCase;
     private final ClaimGuestAccountUseCase claimGuestAccountUseCase;
+    private final SocialLoginUseCase socialLoginUseCase;
+    private final ClaimGuestWithSocialUseCase claimGuestWithSocialUseCase;
     private final AuthCookieService authCookieService;
     private final RequestLanguageContext languageContext;
     private final JsonWebToken jwt;
@@ -120,6 +129,8 @@ public class AuthResource {
             ChangePasswordUseCase changePasswordUseCase,
             GuestLoginUseCase guestLoginUseCase,
             ClaimGuestAccountUseCase claimGuestAccountUseCase,
+            SocialLoginUseCase socialLoginUseCase,
+            ClaimGuestWithSocialUseCase claimGuestWithSocialUseCase,
             AuthCookieService authCookieService,
             RequestLanguageContext languageContext,
             JsonWebToken jwt,
@@ -141,6 +152,8 @@ public class AuthResource {
         this.changePasswordUseCase = Objects.requireNonNull(changePasswordUseCase, "ChangePasswordUseCase cannot be null");
         this.guestLoginUseCase = Objects.requireNonNull(guestLoginUseCase, "GuestLoginUseCase cannot be null");
         this.claimGuestAccountUseCase = Objects.requireNonNull(claimGuestAccountUseCase, "ClaimGuestAccountUseCase cannot be null");
+        this.socialLoginUseCase = Objects.requireNonNull(socialLoginUseCase, "SocialLoginUseCase cannot be null");
+        this.claimGuestWithSocialUseCase = Objects.requireNonNull(claimGuestWithSocialUseCase, "ClaimGuestWithSocialUseCase cannot be null");
         this.authCookieService = Objects.requireNonNull(authCookieService, "AuthCookieService cannot be null");
         this.languageContext = Objects.requireNonNull(languageContext, "RequestLanguageContext cannot be null");
         this.jwt = Objects.requireNonNull(jwt, "JsonWebToken cannot be null");
@@ -260,6 +273,95 @@ public class AuthResource {
         );
 
         AuthResult result = claimGuestAccountUseCase.claimGuestAccount(command);
+        UserProfile profile = getUserProfileUseCase.getProfileById(result.account().getId());
+        NewCookie accessCookie = authCookieService.createAccessTokenCookie(
+                result.tokens().accessToken(),
+                result.tokens().expiresInSeconds()
+        );
+        NewCookie refreshCookie = authCookieService.createRefreshTokenCookie(
+                result.tokens().refreshToken()
+        );
+        return Response.ok(AuthResponse.of(result, profile))
+                .cookie(accessCookie, refreshCookie)
+                .build();
+    }
+
+    @POST
+    @Path("/guest/claim-social/{provider}")
+    @Authenticated
+    @RateLimited(RateLimitTier.LOGIN)
+    @SecurityRequirement(name = "jwtAuth")
+    @Operation(summary = "Claim guest account with OAuth provider", description = "Converts an existing anonymous guest account into a permanent account linked with an OAuth provider")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "200", description = "Guest account claimed successfully",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = AuthResponse.class))),
+            @APIResponse(responseCode = "400", description = "Validation failed, account is not guest, or unsupported provider",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "401", description = "Unauthorized or invalid OAuth token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "409", description = "OAuth identity already linked or email already registered",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response claimGuestSocial(
+            @PathParam("provider") String providerStr,
+            @Valid ClaimGuestSocialRequest request,
+            @Context HttpServerRequest httpRequest
+    ) {
+        UUID accountId = extractAccountId();
+        OAuthProvider provider = OAuthProvider.fromString(providerStr);
+        String clientIp = extractClientIp(httpRequest);
+
+        ClaimGuestSocialCommand command = new ClaimGuestSocialCommand(
+                accountId,
+                provider,
+                request.token(),
+                request.deviceId(),
+                request.deviceName(),
+                clientIp
+        );
+
+        AuthResult result = claimGuestWithSocialUseCase.claimGuestWithSocial(command);
+        UserProfile profile = getUserProfileUseCase.getProfileById(result.account().getId());
+        NewCookie accessCookie = authCookieService.createAccessTokenCookie(
+                result.tokens().accessToken(),
+                result.tokens().expiresInSeconds()
+        );
+        NewCookie refreshCookie = authCookieService.createRefreshTokenCookie(
+                result.tokens().refreshToken()
+        );
+        return Response.ok(AuthResponse.of(result, profile))
+                .cookie(accessCookie, refreshCookie)
+                .build();
+    }
+
+    @POST
+    @Path("/oauth/{provider}")
+    @RateLimited(RateLimitTier.LOGIN)
+    @Operation(summary = "Authenticate user with OAuth provider", description = "Verifies OAuth token with identity provider, finds or creates account, records device session, and returns JWT tokens")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "200", description = "Authentication successful",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = AuthResponse.class))),
+            @APIResponse(responseCode = "400", description = "Validation failed or unsupported provider",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "401", description = "Invalid OAuth token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response oauthLogin(
+            @PathParam("provider") String providerStr,
+            @Valid SocialLoginRequest request,
+            @Context HttpServerRequest httpRequest
+    ) {
+        OAuthProvider provider = OAuthProvider.fromString(providerStr);
+        String clientIp = extractClientIp(httpRequest);
+        SocialLoginCommand command = new SocialLoginCommand(
+                provider,
+                request.token(),
+                request.deviceId(),
+                request.deviceName(),
+                clientIp
+        );
+
+        AuthResult result = socialLoginUseCase.socialLogin(command);
         UserProfile profile = getUserProfileUseCase.getProfileById(result.account().getId());
         NewCookie accessCookie = authCookieService.createAccessTokenCookie(
                 result.tokens().accessToken(),

@@ -87,6 +87,8 @@ services:
       QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY: validate
       JWT_SECRET: ${JWT_SECRET:-mus_super_secret_jwt_key_at_least_32_characters_long_for_security}
       HOUSEKEEPING_API_KEY: ${HOUSEKEEPING_API_KEY:-ordago-dev-housekeeping-secret-key-32chars}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
       RABBITMQ_USERNAME: ${RABBITMQ_USER:-mus_guest}

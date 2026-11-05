@@ -63,11 +63,10 @@ public class Account {
         this.isGuest = isGuest;
         if (!isGuest) {
             this.email = Objects.requireNonNull(email, "Account email cannot be null for regular account");
-            this.passwordHash = Objects.requireNonNull(passwordHash, "Account passwordHash cannot be null for regular account");
         } else {
             this.email = email;
-            this.passwordHash = passwordHash;
         }
+        this.passwordHash = passwordHash;
         this.isSystemAdmin = isSystemAdmin;
         this.emailVerified = emailVerified;
         this.emailVerificationToken = emailVerificationToken;
@@ -237,6 +236,9 @@ public class Account {
     }
 
     public static Account createNew(UUID id, Email email, PasswordHash passwordHash) {
+        Objects.requireNonNull(id, "Account id cannot be null");
+        Objects.requireNonNull(email, "Account email cannot be null for regular account");
+        Objects.requireNonNull(passwordHash, "Account passwordHash cannot be null for regular account");
         Instant now = Instant.now();
         return new Account(
                 id,
@@ -300,6 +302,40 @@ public class Account {
         return createGuest(id, Instant.now());
     }
 
+    public static Account createSocial(UUID id, Email email, Instant now) {
+        Objects.requireNonNull(id, "Account id cannot be null");
+        Objects.requireNonNull(email, "Account email cannot be null");
+        Instant createdAt = now != null ? now : Instant.now();
+        return new Account(
+                id,
+                email,
+                (PasswordHash) null,
+                false,
+                false,
+                true,
+                null,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                false,
+                null,
+                false,
+                null,
+                null,
+                createdAt,
+                createdAt,
+                null
+        );
+    }
+
+    public static Account createSocial(UUID id, String email) {
+        return createSocial(id, Email.of(email), Instant.now());
+    }
+
     public void claimAsRegular(Email newEmail, PasswordHash newPasswordHash, Duration verificationTokenDuration) {
         if (!this.isGuest) {
             throw new AccountNotGuestException();
@@ -313,6 +349,23 @@ public class Account {
 
     public void claimAsRegular(String newEmail, String newPasswordHash, Duration verificationTokenDuration) {
         claimAsRegular(Email.of(newEmail), PasswordHash.of(newPasswordHash), verificationTokenDuration);
+    }
+
+    public void claimAsSocial(Email email) {
+        if (!this.isGuest) {
+            throw new AccountNotGuestException();
+        }
+        this.email = Objects.requireNonNull(email, "email cannot be null");
+        this.passwordHash = null;
+        this.isGuest = false;
+        this.emailVerified = true;
+        this.emailVerificationToken = null;
+        this.emailVerificationExpiresAt = null;
+        this.updatedAt = Instant.now();
+    }
+
+    public void claimAsSocial(String email) {
+        claimAsSocial(Email.of(email));
     }
 
     public boolean isGuest() {
@@ -370,6 +423,10 @@ public class Account {
         this.emailVerificationToken = null;
         this.emailVerificationExpiresAt = null;
         this.updatedAt = Instant.now();
+    }
+
+    public void markEmailVerified() {
+        verifyEmail();
     }
 
     public void verifyEmail(String token) {

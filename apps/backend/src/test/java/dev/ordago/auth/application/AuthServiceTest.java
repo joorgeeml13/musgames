@@ -18,28 +18,40 @@ import org.junit.jupiter.api.Test;
 import dev.ordago.auth.domain.event.TokenTheftDetectedEvent;
 import dev.ordago.auth.domain.exception.AccountBannedException;
 import dev.ordago.auth.domain.exception.AccountLockedException;
+import dev.ordago.auth.domain.exception.AccountNotGuestException;
 import dev.ordago.auth.domain.exception.EmailAlreadyExistsException;
 import dev.ordago.auth.domain.exception.InvalidCredentialsException;
+import dev.ordago.auth.domain.exception.InvalidOAuthTokenException;
 import dev.ordago.auth.domain.exception.InvalidPasswordResetTokenException;
 import dev.ordago.auth.domain.exception.InvalidRefreshTokenException;
 import dev.ordago.auth.domain.exception.InvalidVerificationTokenException;
+import dev.ordago.auth.domain.exception.OAuthIdentityAlreadyLinkedException;
 import dev.ordago.auth.domain.exception.PasswordResetTokenExpiredException;
 import dev.ordago.auth.domain.exception.SessionExpiredException;
 import dev.ordago.auth.domain.exception.SessionNotFoundException;
 import dev.ordago.auth.domain.exception.SessionRevokedException;
 import dev.ordago.auth.domain.exception.VerificationTokenExpiredException;
 import dev.ordago.auth.domain.model.Account;
+import dev.ordago.auth.domain.model.AccountIdentity;
 import dev.ordago.auth.domain.model.AuthTokens;
 import dev.ordago.auth.domain.model.Email;
+import dev.ordago.auth.domain.model.OAuthProvider;
+import dev.ordago.auth.domain.model.OAuthUserInfo;
 import dev.ordago.auth.domain.model.PasswordHash;
 import dev.ordago.auth.domain.model.UserSession;
 import dev.ordago.auth.domain.port.in.ClaimGuestAccountUseCase;
+import dev.ordago.auth.domain.port.in.ClaimGuestWithSocialUseCase;
+import dev.ordago.auth.domain.port.in.ClaimGuestWithSocialUseCase.ClaimGuestSocialCommand;
 import dev.ordago.auth.domain.port.in.LoginUseCase;
 import dev.ordago.auth.domain.port.in.LogoutUseCase;
 import dev.ordago.auth.domain.port.in.RefreshTokenUseCase;
 import dev.ordago.auth.domain.port.in.RegisterUseCase;
 import dev.ordago.auth.domain.port.in.RegisterUseCase.AuthResult;
+import dev.ordago.auth.domain.port.in.SocialLoginUseCase;
+import dev.ordago.auth.domain.port.in.SocialLoginUseCase.SocialLoginCommand;
+import dev.ordago.auth.domain.port.out.AccountIdentityRepositoryPort;
 import dev.ordago.auth.domain.port.out.AccountRepositoryPort;
+import dev.ordago.auth.domain.port.out.OAuthVerifierPort;
 import dev.ordago.auth.domain.port.out.PasswordEncoderPort;
 import dev.ordago.auth.domain.port.out.TokenProviderPort;
 import dev.ordago.auth.domain.port.out.UserSessionRepositoryPort;
@@ -63,6 +75,8 @@ class AuthServiceTest {
     private AuthService authService;
     private InMemoryAccountRepository accountRepository;
     private InMemoryUserSessionRepository sessionRepository;
+    private InMemoryAccountIdentityRepository identityRepository;
+    private StubOAuthVerifierPort oauthVerifierPort;
     private StubPasswordEncoder passwordEncoder;
     private StubTokenProvider tokenProvider;
     private StubCreateUserProfileUseCase createUserProfileUseCase;
@@ -74,6 +88,8 @@ class AuthServiceTest {
     void setUp() {
         accountRepository = new InMemoryAccountRepository();
         sessionRepository = new InMemoryUserSessionRepository();
+        identityRepository = new InMemoryAccountIdentityRepository();
+        oauthVerifierPort = new StubOAuthVerifierPort();
         passwordEncoder = new StubPasswordEncoder();
         tokenProvider = new StubTokenProvider();
         createUserProfileUseCase = new StubCreateUserProfileUseCase();
@@ -90,6 +106,8 @@ class AuthServiceTest {
                 getUserProfileUseCase,
                 sendEmailUseCase,
                 eventPublisherPort,
+                identityRepository,
+                oauthVerifierPort,
                 5,
                 15,
                 30,
@@ -625,6 +643,8 @@ class AuthServiceTest {
                 getUserProfileUseCase,
                 sendEmailUseCase,
                 orderingPublisher,
+                identityRepository,
+                oauthVerifierPort,
                 5,
                 15,
                 30,
@@ -1918,5 +1938,505 @@ class AuthServiceTest {
         public void publish(DomainEvent event) {
             publishedEvents.add(event);
         }
+    }
+
+    private static class InMemoryAccountIdentityRepository implements AccountIdentityRepositoryPort {
+        private final Map<UUID, AccountIdentity> identities = new HashMap<>();
+
+        @Override
+        public Optional<AccountIdentity> findByProviderAndSubject(OAuthProvider provider, String providerSubject) {
+            return identities.values().stream()
+                    .filter(i -> i.provider() == provider && i.providerSubject().equals(providerSubject))
+                    .findFirst();
+        }
+
+        @Override
+        public List<AccountIdentity> findByAccountId(UUID accountId) {
+            return identities.values().stream()
+                    .filter(i -> i.accountId().equals(accountId))
+                    .toList();
+        }
+
+        @Override
+        public AccountIdentity save(AccountIdentity identity) {
+            identities.put(identity.id(), identity);
+            return identity;
+        }
+    }
+
+    private static class StubOAuthVerifierPort implements OAuthVerifierPort {
+        private final Map<String, OAuthUserInfo> tokenMap = new HashMap<>();
+
+        void registerToken(String token, OAuthUserInfo userInfo) {
+            tokenMap.put(token, userInfo);
+        }
+
+        @Override
+        public OAuthUserInfo verify(OAuthProvider provider, String token) {
+            OAuthUserInfo info = tokenMap.get(token);
+            if (info == null) {
+                throw new InvalidOAuthTokenException("Invalid token");
+            }
+            if (info.provider() != provider) {
+                throw new InvalidOAuthTokenException("Provider mismatch");
+            }
+            return info;
+        }
+    }
+
+    @Test
+    void shouldPerformSocialLoginForExistingIdentity() {
+        UUID accountId = UUID.randomUUID();
+        Account account = Account.createSocial(accountId, Email.of("social@ordago.dev"), Instant.now());
+        accountRepository.save(account);
+
+        AccountIdentity identity = AccountIdentity.createNew(
+                UUID.randomUUID(),
+                accountId,
+                OAuthProvider.GOOGLE,
+                "google-sub-123",
+                "social@ordago.dev",
+                Instant.now()
+        );
+        identityRepository.save(identity);
+
+        oauthVerifierPort.registerToken("valid-google-token", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "google-sub-123",
+                "social@ordago.dev",
+                true,
+                "SocialUser",
+                null
+        ));
+
+        SocialLoginCommand cmd = new SocialLoginCommand(
+                OAuthProvider.GOOGLE,
+                "valid-google-token",
+                "device-1",
+                "Chrome",
+                "127.0.0.1"
+        );
+
+        AuthResult result = authService.socialLogin(cmd);
+
+        assertThat(result.account().getId()).isEqualTo(accountId);
+        assertThat(result.session().getAccountId()).isEqualTo(accountId);
+        assertThat(result.tokens().accessToken()).isNotBlank();
+        assertThat(accountRepository.findById(accountId).orElseThrow().getLastLoginIp()).isEqualTo("127.0.0.1");
+    }
+
+    @Test
+    void shouldFailSocialLoginWhenExistingAccountIsBanned() {
+        UUID accountId = UUID.randomUUID();
+        Account account = new Account(
+                accountId,
+                Email.of("banned-social@ordago.dev"),
+                null,
+                false,
+                false,
+                true,
+                null,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                false,
+                null,
+                true,
+                Instant.now().plus(Duration.ofDays(7)),
+                "Cheating violation",
+                Instant.now(),
+                Instant.now(),
+                null
+        );
+        accountRepository.save(account);
+
+        AccountIdentity identity = AccountIdentity.createNew(
+                UUID.randomUUID(),
+                accountId,
+                OAuthProvider.DISCORD,
+                "discord-sub-banned",
+                "banned-social@ordago.dev",
+                Instant.now()
+        );
+        identityRepository.save(identity);
+
+        oauthVerifierPort.registerToken("discord-token-banned", new OAuthUserInfo(
+                OAuthProvider.DISCORD,
+                "discord-sub-banned",
+                "banned-social@ordago.dev",
+                true,
+                "BannedUser",
+                null
+        ));
+
+        SocialLoginCommand cmd = new SocialLoginCommand(
+                OAuthProvider.DISCORD,
+                "discord-token-banned",
+                "device-1",
+                "Firefox",
+                "127.0.0.1"
+        );
+
+        assertThatThrownBy(() -> authService.socialLogin(cmd))
+                .isInstanceOf(AccountBannedException.class)
+                .satisfies(e -> assertThat(((AccountBannedException) e).getArgs()).contains("Cheating violation"));
+    }
+
+    @Test
+    void shouldLinkSocialIdentityToExistingAccountByEmail() {
+        UUID accountId = UUID.randomUUID();
+        Account account = Account.createNew(accountId, "registered@ordago.dev", "hashed-pass");
+        accountRepository.save(account);
+        assertThat(account.isEmailVerified()).isFalse();
+
+        oauthVerifierPort.registerToken("google-token-link", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "google-sub-456",
+                "registered@ordago.dev",
+                true,
+                "RegisteredUser",
+                null
+        ));
+
+        SocialLoginCommand cmd = new SocialLoginCommand(
+                OAuthProvider.GOOGLE,
+                "google-token-link",
+                "device-link",
+                "Desktop",
+                "10.0.0.1"
+        );
+
+        AuthResult result = authService.socialLogin(cmd);
+
+        assertThat(result.account().getId()).isEqualTo(accountId);
+        assertThat(result.account().isEmailVerified()).isTrue();
+        Optional<AccountIdentity> linkedIdentity = identityRepository.findByProviderAndSubject(
+                OAuthProvider.GOOGLE,
+                "google-sub-456"
+        );
+        assertThat(linkedIdentity).isPresent();
+        assertThat(linkedIdentity.get().accountId()).isEqualTo(accountId);
+    }
+
+    @Test
+    void shouldCreateNewSocialAccountWhenNeitherIdentityNorAccountExists() {
+        oauthVerifierPort.registerToken("discord-token-new", new OAuthUserInfo(
+                OAuthProvider.DISCORD,
+                "discord-sub-789",
+                "newplayer@discord.gg",
+                true,
+                "MusHero",
+                "https://cdn.discordapp.com/avatars/789/avatar.png"
+        ));
+
+        SocialLoginCommand cmd = new SocialLoginCommand(
+                OAuthProvider.DISCORD,
+                "discord-token-new",
+                "device-new",
+                "Mobile",
+                "192.168.1.50"
+        );
+
+        AuthResult result = authService.socialLogin(cmd);
+
+        assertThat(result.account()).isNotNull();
+        assertThat(result.account().isGuest()).isFalse();
+        assertThat(result.account().isEmailVerified()).isTrue();
+        assertThat(result.account().getEmailValue()).isEqualTo("newplayer@discord.gg");
+        assertThat(result.account().getPasswordHash()).isNull();
+
+        UserProfile profile = getUserProfileUseCase.getProfileById(result.account().getId());
+        assertThat(profile).isNotNull();
+        assertThat(profile.getGameName()).isEqualTo("MusHero");
+
+        Optional<AccountIdentity> createdIdentity = identityRepository.findByProviderAndSubject(
+                OAuthProvider.DISCORD,
+                "discord-sub-789"
+        );
+        assertThat(createdIdentity).isPresent();
+        assertThat(createdIdentity.get().accountId()).isEqualTo(result.account().getId());
+    }
+
+    @Test
+    void shouldSanitizeDisplayNameWhenCreatingNewSocialProfile() {
+        oauthVerifierPort.registerToken("token-sanitize-1", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "sub-sanitize-1",
+                "sanitize1@ordago.dev",
+                true,
+                "🔥 Mus_Master 2026! 🃏",
+                null
+        ));
+
+        AuthResult result = authService.socialLogin(new SocialLoginCommand(
+                OAuthProvider.GOOGLE,
+                "token-sanitize-1",
+                "dev-1",
+                "Browser",
+                "127.0.0.1"
+        ));
+
+        UserProfile profile = getUserProfileUseCase.getProfileById(result.account().getId());
+        assertThat(profile.getGameName()).isEqualTo("Mus_Master 2026");
+
+        // Edge case: empty or 1-character display name falls back to "Player"
+        oauthVerifierPort.registerToken("token-sanitize-2", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "sub-sanitize-2",
+                "sanitize2@ordago.dev",
+                true,
+                "!",
+                null
+        ));
+
+        AuthResult result2 = authService.socialLogin(new SocialLoginCommand(
+                OAuthProvider.GOOGLE,
+                "token-sanitize-2",
+                "dev-2",
+                "Browser",
+                "127.0.0.1"
+        ));
+
+        UserProfile profile2 = getUserProfileUseCase.getProfileById(result2.account().getId());
+        assertThat(profile2.getGameName()).isEqualTo("Player");
+    }
+
+    @Test
+    void shouldClaimGuestAccountWithSocialSuccessfully() {
+        UUID guestAccountId = UUID.randomUUID();
+        Account guestAccount = Account.createGuest(guestAccountId);
+        accountRepository.save(guestAccount);
+
+        UserProfile guestProfile = createUserProfileUseCase.createUserProfile(
+                new CreateUserProfileUseCase.CreateProfileCommand(guestAccountId, "Guest9999", "666", "es-ES")
+        );
+
+        UserSession guestSession = UserSession.createNew(
+                UUID.randomUUID(),
+                guestAccountId,
+                "device-guest",
+                "GuestDevice",
+                "old-refresh-hash",
+                Duration.ofDays(30)
+        );
+        sessionRepository.save(guestSession);
+
+        oauthVerifierPort.registerToken("google-token-claim", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "google-claim-sub",
+                "claimed-social@ordago.dev",
+                true,
+                "DifferentName",
+                null
+        ));
+
+        ClaimGuestSocialCommand cmd = new ClaimGuestSocialCommand(
+                guestAccountId,
+                OAuthProvider.GOOGLE,
+                "google-token-claim",
+                "device-new",
+                "NewDevice",
+                "192.168.1.1"
+        );
+
+        AuthResult result = authService.claimGuestWithSocial(cmd);
+
+        assertThat(result.account().isGuest()).isFalse();
+        assertThat(result.account().isEmailVerified()).isTrue();
+        assertThat(result.account().getEmailValue()).isEqualTo("claimed-social@ordago.dev");
+        assertThat(result.account().getPasswordHash()).isNull();
+
+        // Total profile preservation: gameName and tagLine untouched
+        UserProfile currentProfile = getUserProfileUseCase.getProfileById(guestAccountId);
+        assertThat(currentProfile.getGameName()).isEqualTo("Guest9999");
+        assertThat(currentProfile.getTagLine()).isEqualTo("666");
+
+        // Old guest session revoked
+        UserSession oldSession = sessionRepository.findById(guestSession.getId()).orElseThrow();
+        assertThat(oldSession.isRevoked()).isTrue();
+
+        // Identity created
+        Optional<AccountIdentity> identity = identityRepository.findByProviderAndSubject(
+                OAuthProvider.GOOGLE,
+                "google-claim-sub"
+        );
+        assertThat(identity).isPresent();
+        assertThat(identity.get().accountId()).isEqualTo(guestAccountId);
+    }
+
+    @Test
+    void shouldFailClaimGuestWithSocialWhenAccountIsNotGuest() {
+        UUID accountId = UUID.randomUUID();
+        Account regular = Account.createNew(accountId, "regular@ordago.dev", "hashed-pass");
+        accountRepository.save(regular);
+
+        oauthVerifierPort.registerToken("token-claim-not-guest", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "sub-not-guest",
+                "notguest@ordago.dev",
+                true,
+                "User",
+                null
+        ));
+
+        ClaimGuestSocialCommand cmd = new ClaimGuestSocialCommand(
+                accountId,
+                OAuthProvider.GOOGLE,
+                "token-claim-not-guest",
+                "dev-1",
+                "Browser",
+                "127.0.0.1"
+        );
+
+        assertThatThrownBy(() -> authService.claimGuestWithSocial(cmd))
+                .isInstanceOf(AccountNotGuestException.class);
+    }
+
+    @Test
+    void shouldFailClaimGuestWithSocialWhenIdentityAlreadyLinkedToAnotherAccount() {
+        UUID otherAccountId = UUID.randomUUID();
+        identityRepository.save(AccountIdentity.createNew(
+                UUID.randomUUID(),
+                otherAccountId,
+                OAuthProvider.GOOGLE,
+                "sub-already-linked",
+                "other@ordago.dev",
+                Instant.now()
+        ));
+
+        UUID guestAccountId = UUID.randomUUID();
+        Account guestAccount = Account.createGuest(guestAccountId);
+        accountRepository.save(guestAccount);
+
+        oauthVerifierPort.registerToken("token-already-linked", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "sub-already-linked",
+                "other@ordago.dev",
+                true,
+                "Other",
+                null
+        ));
+
+        ClaimGuestSocialCommand cmd = new ClaimGuestSocialCommand(
+                guestAccountId,
+                OAuthProvider.GOOGLE,
+                "token-already-linked",
+                "dev-1",
+                "Browser",
+                "127.0.0.1"
+        );
+
+        assertThatThrownBy(() -> authService.claimGuestWithSocial(cmd))
+                .isInstanceOf(OAuthIdentityAlreadyLinkedException.class);
+    }
+
+    @Test
+    void shouldFailClaimGuestWithSocialWhenEmailCollidesWithExistingAccount() {
+        UUID otherAccountId = UUID.randomUUID();
+        Account otherAccount = Account.createNew(otherAccountId, "collision@ordago.dev", "hash");
+        accountRepository.save(otherAccount);
+
+        UUID guestAccountId = UUID.randomUUID();
+        Account guestAccount = Account.createGuest(guestAccountId);
+        accountRepository.save(guestAccount);
+
+        oauthVerifierPort.registerToken("token-collision", new OAuthUserInfo(
+                OAuthProvider.DISCORD,
+                "sub-discord-coll",
+                "collision@ordago.dev",
+                true,
+                "CollisionUser",
+                null
+        ));
+
+        ClaimGuestSocialCommand cmd = new ClaimGuestSocialCommand(
+                guestAccountId,
+                OAuthProvider.DISCORD,
+                "token-collision",
+                "dev-1",
+                "Browser",
+                "127.0.0.1"
+        );
+
+        assertThatThrownBy(() -> authService.claimGuestWithSocial(cmd))
+                .isInstanceOf(EmailAlreadyExistsException.class);
+    }
+
+    @Test
+    void shouldRejectSocialLoginWhenEmailNotVerified() {
+        oauthVerifierPort.registerToken("unverified-token", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "sub-unverified",
+                "unverified@ordago.dev",
+                false,
+                "Unverified",
+                null
+        ));
+
+        SocialLoginCommand cmd = new SocialLoginCommand(
+                OAuthProvider.GOOGLE,
+                "unverified-token",
+                "dev-1",
+                "Browser",
+                "127.0.0.1"
+        );
+
+        assertThatThrownBy(() -> authService.socialLogin(cmd))
+                .isInstanceOf(InvalidOAuthTokenException.class);
+    }
+
+    @Test
+    void shouldRejectSocialLoginWhenEmailIsNull() {
+        oauthVerifierPort.registerToken("null-email-token", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "sub-null-email",
+                null,
+                true,
+                "NullEmail",
+                null
+        ));
+
+        SocialLoginCommand cmd = new SocialLoginCommand(
+                OAuthProvider.GOOGLE,
+                "null-email-token",
+                "dev-1",
+                "Browser",
+                "127.0.0.1"
+        );
+
+        assertThatThrownBy(() -> authService.socialLogin(cmd))
+                .isInstanceOf(InvalidOAuthTokenException.class);
+    }
+
+    @Test
+    void shouldRejectClaimGuestWithSocialWhenEmailNotVerified() {
+        UUID guestAccountId = UUID.randomUUID();
+        Account guestAccount = Account.createGuest(guestAccountId);
+        accountRepository.save(guestAccount);
+
+        oauthVerifierPort.registerToken("unverified-claim-token", new OAuthUserInfo(
+                OAuthProvider.GOOGLE,
+                "sub-unverified-claim",
+                "unverified-claim@ordago.dev",
+                false,
+                "Unverified",
+                null
+        ));
+
+        ClaimGuestSocialCommand cmd = new ClaimGuestSocialCommand(
+                guestAccountId,
+                OAuthProvider.GOOGLE,
+                "unverified-claim-token",
+                "device-new",
+                "NewDevice",
+                "192.168.1.1"
+        );
+
+        assertThatThrownBy(() -> authService.claimGuestWithSocial(cmd))
+                .isInstanceOf(InvalidOAuthTokenException.class);
     }
 }

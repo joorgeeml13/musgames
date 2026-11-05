@@ -490,4 +490,40 @@ class AccountTest {
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("validity cannot be null");
     }
+
+    @Test
+    void shouldCreateSocialAccountWithVerifiedEmailAndNoPasswordHash() {
+        UUID id = UUID.randomUUID();
+        Account socialAccount = Account.createSocial(id, "social@ordago.dev");
+
+        assertThat(socialAccount.getId()).isEqualTo(id);
+        assertThat(socialAccount.getEmailValue()).isEqualTo("social@ordago.dev");
+        assertThat(socialAccount.getPasswordHash()).isNull();
+        assertThat(socialAccount.isGuest()).isFalse();
+        assertThat(socialAccount.isEmailVerified()).isTrue();
+        assertThat(socialAccount.getEmailVerificationToken()).isNull();
+    }
+
+    @Test
+    void shouldClaimGuestAccountSuccessfullyAsSocialAccount() {
+        UUID id = UUID.randomUUID();
+        Account guestAccount = Account.createGuest(id);
+
+        guestAccount.claimAsSocial("claimed_social@ordago.dev");
+
+        assertThat(guestAccount.isGuest()).isFalse();
+        assertThat(guestAccount.getEmailValue()).isEqualTo("claimed_social@ordago.dev");
+        assertThat(guestAccount.getPasswordHash()).isNull();
+        assertThat(guestAccount.isEmailVerified()).isTrue();
+        assertThat(guestAccount.getEmailVerificationToken()).isNull();
+    }
+
+    @Test
+    void shouldRejectClaimAsSocialWhenAccountIsNotGuest() {
+        UUID id = UUID.randomUUID();
+        Account regular = Account.createNew(id, "regular@ordago.dev", "hash");
+
+        assertThatThrownBy(() -> regular.claimAsSocial("social@ordago.dev"))
+                .isInstanceOf(AccountNotGuestException.class);
+    }
 }
