@@ -7,12 +7,14 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.transaction.Transactional;
 import dev.ordago.auth.domain.event.TokenTheftDetectedEvent;
 import dev.ordago.auth.domain.exception.AccountBannedException;
 import dev.ordago.auth.domain.exception.AccountLockedException;
+import dev.ordago.auth.domain.exception.AccountNotGuestException;
 import dev.ordago.auth.domain.exception.EmailAlreadyExistsException;
 import dev.ordago.auth.domain.exception.InvalidCredentialsException;
 import dev.ordago.auth.domain.exception.InvalidPasswordResetTokenException;
@@ -29,10 +31,13 @@ import dev.ordago.auth.domain.model.Email;
 import dev.ordago.auth.domain.model.PasswordHash;
 import dev.ordago.auth.domain.model.UserSession;
 import dev.ordago.auth.domain.port.in.ChangePasswordUseCase;
+import dev.ordago.auth.domain.port.in.ClaimGuestAccountUseCase;
 import dev.ordago.auth.domain.port.in.GetCurrentAccountUseCase;
 import dev.ordago.auth.domain.port.in.GetUserSessionsUseCase;
+import dev.ordago.auth.domain.port.in.GuestLoginUseCase;
 import dev.ordago.auth.domain.port.in.LoginUseCase;
 import dev.ordago.auth.domain.port.in.LogoutUseCase;
+import dev.ordago.auth.domain.port.in.PurgeExpiredGuestAccountsUseCase;
 import dev.ordago.auth.domain.port.in.RefreshTokenUseCase;
 import dev.ordago.auth.domain.port.in.RegisterUseCase;
 import dev.ordago.auth.domain.port.in.RequestPasswordResetUseCase;
@@ -51,6 +56,7 @@ import dev.ordago.profile.domain.model.PlayerTag;
 import dev.ordago.profile.domain.model.UserProfile;
 import dev.ordago.profile.domain.port.in.CreateUserProfileUseCase;
 import dev.ordago.profile.domain.port.in.GetUserProfileUseCase;
+import dev.ordago.shared.domain.exception.ValidationException;
 import dev.ordago.shared.domain.port.out.EventPublisherPort;
 
 @ApplicationScoped
@@ -66,10 +72,14 @@ public class AuthService implements
         ResendVerificationEmailUseCase,
         RequestPasswordResetUseCase,
         ResetPasswordUseCase,
-        ChangePasswordUseCase {
+        ChangePasswordUseCase,
+        GuestLoginUseCase,
+        ClaimGuestAccountUseCase,
+        PurgeExpiredGuestAccountsUseCase {
 
     private static final String DUMMY_ARGON2_HASH =
             "$argon2id$v=19$m=65536,t=3,p=1$c29tZXNhbHQxMjM0NTY3OA$9S88u9pP7+h+K1lF8V9w2W2Vb5X3kZ6m0P1q2R3s4T4";
+    private static final int MAX_RETENTION_DAYS = 3650;
 
     private final AccountRepositoryPort accountRepository;
     private final UserSessionRepositoryPort userSessionRepository;
@@ -169,6 +179,111 @@ public class AuthService implements
     }
 
     @Override
+    @Transactional
+    public AuthResult loginAsGuest(GuestLoginCommand command) {
+        Objects.requireNonNull(command, "GuestLoginCommand cannot be null");
+        UUID accountId = UUID.randomUUID();
+        Account account = Account.createGuest(accountId, Instant.now());
+        accountRepository.save(account);
+
+        UserProfile profile = null;
+        for (int i = 0; i < 5; i++) {
+            int randomDigits = ThreadLocalRandom.current().nextInt(1000, 10000);
+            String guestGameName = "Guest" + randomDigits;
+            try {
+                profile = createUserProfileUseCase.createUserProfile(
+                        new CreateUserProfileUseCase.CreateProfileCommand(
+                                accountId,
+                                guestGameName,
+                                "666",
+                                "es-ES"
+                        )
+                );
+                break;
+            } catch (Exception e) {
+                if (i == 4) {
+                    throw e;
+                }
+            }
+        }
+
+        SessionWithToken sessionWithToken = createSession(accountId, command.deviceId(), command.deviceName());
+        userSessionRepository.save(sessionWithToken.session());
+
+        String playerTag = (profile != null && profile.getPlayerTag() != null) ? profile.getPlayerTag().formatted() : null;
+        String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session(), playerTag);
+        AuthTokens tokens = AuthTokens.of(accessToken, sessionWithToken.plainRefreshToken(), tokenProvider.getAccessTokenLifespanSeconds());
+
+        return new AuthResult(account, sessionWithToken.session(), tokens);
+    }
+
+    @Override
+    @Transactional
+    public AuthResult claimGuestAccount(ClaimGuestCommand command) {
+        Objects.requireNonNull(command, "ClaimGuestCommand cannot be null");
+        Objects.requireNonNull(command.accountId(), "accountId cannot be null");
+        Email email = Email.of(command.email());
+
+        Account account = accountRepository.findById(command.accountId())
+                .orElseThrow(InvalidCredentialsException::new);
+
+        if (account.isDeleted()) {
+            throw new InvalidCredentialsException();
+        }
+
+        if (account.isBanned()) {
+            throw new AccountBannedException(account.getBanReason());
+        }
+
+        if (!account.isGuest()) {
+            throw new AccountNotGuestException();
+        }
+
+        if (accountRepository.findByEmail(email.value()).isPresent()) {
+            throw new EmailAlreadyExistsException(email.value());
+        }
+
+        PasswordHash passwordHash = PasswordHash.of(passwordEncoder.encode(command.password()));
+        account.claimAsRegular(email, passwordHash, verificationTokenDuration);
+        accountRepository.save(account);
+
+        userSessionRepository.revokeAllForAccount(account.getId(), "Account claimed as regular", Instant.now());
+
+        String language = (command.language() != null && !command.language().isBlank())
+                ? command.language()
+                : "es";
+        sendEmailUseCase.sendEmail(
+                SendEmailCommand.emailVerification(
+                        account.getEmailValue(),
+                        account.getEmailVerificationToken(),
+                        language
+                )
+        );
+
+        SessionWithToken sessionWithToken = createSession(account.getId(), command.deviceId(), command.deviceName());
+        userSessionRepository.save(sessionWithToken.session());
+
+        String playerTag = resolvePlayerTag(account.getId());
+        String accessToken = tokenProvider.createAccessToken(account, sessionWithToken.session(), playerTag);
+        AuthTokens tokens = AuthTokens.of(accessToken, sessionWithToken.plainRefreshToken(), tokenProvider.getAccessTokenLifespanSeconds());
+
+        return new AuthResult(account, sessionWithToken.session(), tokens);
+    }
+
+    @Override
+    @Transactional
+    public PurgeGuestsResult purgeExpiredGuestAccounts(int retentionDays) {
+        if (retentionDays < 0 || retentionDays > MAX_RETENTION_DAYS) {
+            throw new ValidationException("VALIDATION_ERROR", "Retention days must be between 0 and " + MAX_RETENTION_DAYS + ": " + retentionDays);
+        }
+
+        Instant cutoff = Instant.now().minus(Duration.ofDays(retentionDays));
+        long purgedCount = accountRepository.deleteGuestsOlderThan(cutoff);
+
+        return new PurgeGuestsResult(purgedCount, cutoff, retentionDays);
+    }
+
+    @Override
     @Transactional(dontRollbackOn = InvalidCredentialsException.class)
     public AuthResult login(LoginCommand command) {
         Objects.requireNonNull(command, "LoginCommand cannot be null");
@@ -183,8 +298,8 @@ public class AuthService implements
         Account account = accountRepository.findByEmail(email.value()).orElse(null);
 
         // Constant-time dummy verification when account does not exist to prevent timing attacks / user enumeration
-        String hashToVerify = (account != null && !account.isDeleted())
-                ? account.getPasswordHash().value()
+        String hashToVerify = (account != null && !account.isDeleted() && account.getPasswordHashValue() != null)
+                ? account.getPasswordHashValue()
                 : DUMMY_ARGON2_HASH;
         boolean passwordMatches = passwordEncoder.matches(command.password(), hashToVerify);
 
@@ -505,7 +620,7 @@ public class AuthService implements
             throw new InvalidCredentialsException();
         }
 
-        if (!passwordEncoder.matches(currentPassword, account.getPasswordHash().value())) {
+        if (account.getPasswordHashValue() == null || !passwordEncoder.matches(currentPassword, account.getPasswordHashValue())) {
             throw new InvalidCredentialsException();
         }
 

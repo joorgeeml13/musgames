@@ -1,5 +1,6 @@
 package dev.ordago.auth.domain.port.out;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import dev.ordago.auth.domain.model.Account;
@@ -17,4 +18,8 @@ public interface AccountRepositoryPort {
     Optional<Account> findByEmailVerificationToken(String token);
 
     Optional<Account> findByPasswordResetToken(String token);
+
+    default long deleteGuestsOlderThan(Instant cutoff) {
+        return 0;
+    }
 }

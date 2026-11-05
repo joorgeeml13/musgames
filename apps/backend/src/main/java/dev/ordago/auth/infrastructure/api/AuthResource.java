@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.security.Authenticated;
 import io.vertx.core.http.HttpServerRequest;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.CookieParam;
@@ -35,8 +36,10 @@ import jakarta.ws.rs.core.Response;
 import dev.ordago.auth.domain.model.Account;
 import dev.ordago.auth.domain.model.AuthTokens;
 import dev.ordago.auth.domain.port.in.ChangePasswordUseCase;
+import dev.ordago.auth.domain.port.in.ClaimGuestAccountUseCase;
 import dev.ordago.auth.domain.port.in.GetCurrentAccountUseCase;
 import dev.ordago.auth.domain.port.in.GetUserSessionsUseCase;
+import dev.ordago.auth.domain.port.in.GuestLoginUseCase;
 import dev.ordago.auth.domain.port.in.LoginUseCase;
 import dev.ordago.auth.domain.port.in.LogoutUseCase;
 import dev.ordago.auth.domain.port.in.RefreshTokenUseCase;
@@ -49,7 +52,9 @@ import dev.ordago.auth.domain.port.in.RevokeSessionUseCase;
 import dev.ordago.auth.domain.port.in.VerifyEmailUseCase;
 import dev.ordago.auth.infrastructure.api.dto.AuthResponse;
 import dev.ordago.auth.infrastructure.api.dto.ChangePasswordRequest;
+import dev.ordago.auth.infrastructure.api.dto.ClaimGuestRequest;
 import dev.ordago.auth.infrastructure.api.dto.ForgotPasswordRequest;
+import dev.ordago.auth.infrastructure.api.dto.GuestLoginRequest;
 import dev.ordago.auth.infrastructure.api.dto.LoginRequest;
 import dev.ordago.auth.infrastructure.api.dto.LogoutRequest;
 import dev.ordago.auth.infrastructure.api.dto.RefreshTokenRequest;
@@ -90,12 +95,15 @@ public class AuthResource {
     private final RequestPasswordResetUseCase requestPasswordResetUseCase;
     private final ResetPasswordUseCase resetPasswordUseCase;
     private final ChangePasswordUseCase changePasswordUseCase;
+    private final GuestLoginUseCase guestLoginUseCase;
+    private final ClaimGuestAccountUseCase claimGuestAccountUseCase;
     private final AuthCookieService authCookieService;
     private final RequestLanguageContext languageContext;
     private final JsonWebToken jwt;
     private final ObjectMapper objectMapper;
     private final ClientIpResolver clientIpResolver;
 
+    @Inject
     public AuthResource(
             RegisterUseCase registerUseCase,
             LoginUseCase loginUseCase,
@@ -110,6 +118,8 @@ public class AuthResource {
             RequestPasswordResetUseCase requestPasswordResetUseCase,
             ResetPasswordUseCase resetPasswordUseCase,
             ChangePasswordUseCase changePasswordUseCase,
+            GuestLoginUseCase guestLoginUseCase,
+            ClaimGuestAccountUseCase claimGuestAccountUseCase,
             AuthCookieService authCookieService,
             RequestLanguageContext languageContext,
             JsonWebToken jwt,
@@ -129,6 +139,8 @@ public class AuthResource {
         this.requestPasswordResetUseCase = Objects.requireNonNull(requestPasswordResetUseCase, "RequestPasswordResetUseCase cannot be null");
         this.resetPasswordUseCase = Objects.requireNonNull(resetPasswordUseCase, "ResetPasswordUseCase cannot be null");
         this.changePasswordUseCase = Objects.requireNonNull(changePasswordUseCase, "ChangePasswordUseCase cannot be null");
+        this.guestLoginUseCase = Objects.requireNonNull(guestLoginUseCase, "GuestLoginUseCase cannot be null");
+        this.claimGuestAccountUseCase = Objects.requireNonNull(claimGuestAccountUseCase, "ClaimGuestAccountUseCase cannot be null");
         this.authCookieService = Objects.requireNonNull(authCookieService, "AuthCookieService cannot be null");
         this.languageContext = Objects.requireNonNull(languageContext, "RequestLanguageContext cannot be null");
         this.jwt = Objects.requireNonNull(jwt, "JsonWebToken cannot be null");
@@ -176,6 +188,88 @@ public class AuthResource {
         return Response.status(Response.Status.CREATED)
                 .cookie(accessCookie, refreshCookie)
                 .entity(AuthResponse.of(result, profile))
+                .build();
+    }
+
+    @POST
+    @Path("/guest")
+    @RateLimited(RateLimitTier.REGISTER)
+    @Operation(summary = "Authenticate anonymously as guest", description = "Creates a temporary guest account and returns access and refresh tokens")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "201", description = "Guest account created successfully",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = AuthResponse.class))),
+            @APIResponse(responseCode = "400", description = "Validation failed for request fields",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response guestLogin(@Valid GuestLoginRequest request, @Context HttpServerRequest httpRequest) {
+        String clientIp = extractClientIp(httpRequest);
+        String deviceId = request != null ? request.deviceId() : null;
+        String deviceName = request != null ? request.deviceName() : null;
+        GuestLoginUseCase.GuestLoginCommand command = new GuestLoginUseCase.GuestLoginCommand(
+                deviceId,
+                deviceName,
+                clientIp
+        );
+
+        AuthResult result = guestLoginUseCase.loginAsGuest(command);
+        UserProfile profile = getUserProfileUseCase.getProfileById(result.account().getId());
+        NewCookie accessCookie = authCookieService.createAccessTokenCookie(
+                result.tokens().accessToken(),
+                result.tokens().expiresInSeconds()
+        );
+        NewCookie refreshCookie = authCookieService.createRefreshTokenCookie(
+                result.tokens().refreshToken()
+        );
+        return Response.status(Response.Status.CREATED)
+                .cookie(accessCookie, refreshCookie)
+                .entity(AuthResponse.of(result, profile))
+                .build();
+    }
+
+    @POST
+    @Path("/guest/claim")
+    @Authenticated
+    @RateLimited(RateLimitTier.LOGIN)
+    @SecurityRequirement(name = "jwtAuth")
+    @Operation(summary = "Claim guest account into regular account", description = "Converts an existing anonymous guest account into a registered account with email and password")
+    @APIResponses(value = {
+            @APIResponse(responseCode = "200", description = "Guest account claimed successfully",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = AuthResponse.class))),
+            @APIResponse(responseCode = "400", description = "Validation failed or account is not a guest",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "401", description = "Unauthorized or expired token",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class))),
+            @APIResponse(responseCode = "409", description = "Email is already registered",
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ApiError.class)))
+    })
+    public Response claimGuest(@Valid ClaimGuestRequest request, @Context HttpServerRequest httpRequest) {
+        UUID accountId = extractAccountId();
+        String clientIp = extractClientIp(httpRequest);
+        String language = (languageContext != null && languageContext.getLanguage() != null)
+                ? languageContext.getLanguage().getCode()
+                : "es";
+
+        ClaimGuestAccountUseCase.ClaimGuestCommand command = new ClaimGuestAccountUseCase.ClaimGuestCommand(
+                accountId,
+                request.email(),
+                request.password(),
+                request.deviceId(),
+                request.deviceName(),
+                clientIp,
+                language
+        );
+
+        AuthResult result = claimGuestAccountUseCase.claimGuestAccount(command);
+        UserProfile profile = getUserProfileUseCase.getProfileById(result.account().getId());
+        NewCookie accessCookie = authCookieService.createAccessTokenCookie(
+                result.tokens().accessToken(),
+                result.tokens().expiresInSeconds()
+        );
+        NewCookie refreshCookie = authCookieService.createRefreshTokenCookie(
+                result.tokens().refreshToken()
+        );
+        return Response.ok(AuthResponse.of(result, profile))
+                .cookie(accessCookie, refreshCookie)
                 .build();
     }
 

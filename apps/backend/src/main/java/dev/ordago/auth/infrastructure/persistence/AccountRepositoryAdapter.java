@@ -1,5 +1,6 @@
 package dev.ordago.auth.infrastructure.persistence;
 
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -23,8 +24,9 @@ public class AccountRepositoryAdapter implements AccountRepositoryPort {
             entity = AccountEntity.fromDomain(account);
             panacheRepository.persist(entity);
         } else {
-            entity.email = account.getEmail().value();
-            entity.passwordHash = account.getPasswordHash().value();
+            entity.email = account.getEmailValue();
+            entity.passwordHash = account.getPasswordHashValue();
+            entity.isGuest = account.isGuest();
             entity.isSystemAdmin = account.isSystemAdmin();
             entity.emailVerified = account.isEmailVerified();
             entity.emailVerificationToken = account.getEmailVerificationToken();
@@ -69,5 +71,10 @@ public class AccountRepositoryAdapter implements AccountRepositoryPort {
     @Override
     public Optional<Account> findByPasswordResetToken(String token) {
         return panacheRepository.findByPasswordResetToken(token).map(AccountEntity::toDomain);
+    }
+
+    @Override
+    public long deleteGuestsOlderThan(Instant cutoff) {
+        return panacheRepository.deleteGuestsOlderThan(cutoff);
     }
 }

@@ -33,6 +33,7 @@ import dev.ordago.auth.domain.model.AuthTokens;
 import dev.ordago.auth.domain.model.Email;
 import dev.ordago.auth.domain.model.PasswordHash;
 import dev.ordago.auth.domain.model.UserSession;
+import dev.ordago.auth.domain.port.in.ClaimGuestAccountUseCase;
 import dev.ordago.auth.domain.port.in.LoginUseCase;
 import dev.ordago.auth.domain.port.in.LogoutUseCase;
 import dev.ordago.auth.domain.port.in.RefreshTokenUseCase;
@@ -1545,6 +1546,106 @@ class AuthServiceTest {
                 .isInstanceOf(NullPointerException.class);
     }
 
+    @Test
+    void shouldThrowAccountBannedExceptionWhenClaimingBannedGuestAccount() {
+        // Arrange
+        UUID accountId = UUID.randomUUID();
+        Account bannedGuest = new Account(
+                accountId,
+                (Email) null,
+                (PasswordHash) null,
+                true,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                0,
+                null,
+                null,
+                null,
+                false,
+                null,
+                true,
+                null,
+                "Cheating detected",
+                Instant.now(),
+                Instant.now(),
+                null
+        );
+        accountRepository.save(bannedGuest);
+
+        ClaimGuestAccountUseCase.ClaimGuestCommand command = new ClaimGuestAccountUseCase.ClaimGuestCommand(
+                accountId,
+                "banned_guest@ordago.dev",
+                "SecurePassword123!",
+                "device-1",
+                "Chrome",
+                "127.0.0.1",
+                "es"
+        );
+
+        // Act & Assert
+        assertThatThrownBy(() -> authService.claimGuestAccount(command))
+                .isInstanceOf(AccountBannedException.class)
+                .hasMessage("auth.account_banned");
+    }
+
+    @Test
+    void shouldRevokeAllPriorSessionsWhenGuestAccountClaimed() {
+        // Arrange
+        UUID accountId = UUID.randomUUID();
+        Account guestAccount = Account.createGuest(accountId);
+        accountRepository.save(guestAccount);
+
+        UserSession priorSession1 = UserSession.createNew(
+                UUID.randomUUID(),
+                accountId,
+                "device-old-1",
+                "Chrome",
+                "hash-1",
+                Duration.ofDays(30)
+        );
+        UserSession priorSession2 = UserSession.createNew(
+                UUID.randomUUID(),
+                accountId,
+                "device-old-2",
+                "Firefox",
+                "hash-2",
+                Duration.ofDays(30)
+        );
+        sessionRepository.save(priorSession1);
+        sessionRepository.save(priorSession2);
+
+        ClaimGuestAccountUseCase.ClaimGuestCommand command = new ClaimGuestAccountUseCase.ClaimGuestCommand(
+                accountId,
+                "claimed_guest@ordago.dev",
+                "SecurePassword123!",
+                "device-new",
+                "Safari",
+                "127.0.0.1",
+                "es"
+        );
+
+        // Act
+        RegisterUseCase.AuthResult result = authService.claimGuestAccount(command);
+
+        // Assert
+        UserSession updatedSession1 = sessionRepository.findById(priorSession1.getId()).orElseThrow();
+        UserSession updatedSession2 = sessionRepository.findById(priorSession2.getId()).orElseThrow();
+
+        assertThat(updatedSession1.isRevoked()).isTrue();
+        assertThat(updatedSession1.getRevocationReason()).isEqualTo("Account claimed as regular");
+        assertThat(updatedSession2.isRevoked()).isTrue();
+        assertThat(updatedSession2.getRevocationReason()).isEqualTo("Account claimed as regular");
+
+        // The newly created session for regular account is active
+        assertThat(result.session().isRevoked()).isFalse();
+        assertThat(result.session().getAccountId()).isEqualTo(accountId);
+        assertThat(result.session().getDeviceId()).isEqualTo("device-new");
+    }
+
     // --- In-Memory Test Doubles ---
 
     private static class InMemoryAccountRepository implements AccountRepositoryPort {
@@ -1564,7 +1665,7 @@ class AuthServiceTest {
         @Override
         public Optional<Account> findByEmail(String email) {
             return accounts.values().stream()
-                    .filter(a -> a.getEmail().value().equalsIgnoreCase(email.trim().toLowerCase(Locale.ROOT)))
+                    .filter(a -> a.getEmail() != null && a.getEmail().value() != null && a.getEmail().value().equalsIgnoreCase(email.trim().toLowerCase(Locale.ROOT)))
                     .findFirst();
         }
 

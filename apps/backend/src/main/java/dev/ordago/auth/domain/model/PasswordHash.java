@@ -19,6 +19,10 @@ public record PasswordHash(String value) {
         return new PasswordHash(value);
     }
 
+    public static PasswordHash ofNullable(String value) {
+        return (value != null && !value.isBlank()) ? new PasswordHash(value) : null;
+    }
+
     @Override
     public String toString() {
         return "[PROTECTED]";

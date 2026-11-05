@@ -10,6 +10,8 @@ import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import dev.ordago.auth.domain.model.Account;
+import dev.ordago.auth.domain.model.Email;
+import dev.ordago.auth.domain.model.PasswordHash;
 
 @Entity
 @Table(
@@ -28,11 +30,14 @@ public class AccountEntity extends PanacheEntityBase {
     @Column(name = "version")
     public Long version;
 
-    @Column(name = "email", nullable = false, unique = true, length = 255)
+    @Column(name = "email", unique = true, length = 255)
     public String email;
 
-    @Column(name = "password_hash", nullable = false, length = 255)
+    @Column(name = "password_hash", length = 255)
     public String passwordHash;
+
+    @Column(name = "is_guest", nullable = false)
+    public boolean isGuest = false;
 
     @Column(name = "is_system_admin", nullable = false)
     public boolean isSystemAdmin = false;
@@ -91,8 +96,9 @@ public class AccountEntity extends PanacheEntityBase {
     public Account toDomain() {
         return new Account(
                 this.id,
-                this.email,
-                this.passwordHash,
+                this.email != null ? Email.of(this.email) : null,
+                this.passwordHash != null ? PasswordHash.of(this.passwordHash) : null,
+                this.isGuest,
                 this.isSystemAdmin,
                 this.emailVerified,
                 this.emailVerificationToken,
@@ -117,8 +123,9 @@ public class AccountEntity extends PanacheEntityBase {
     public static AccountEntity fromDomain(Account domain) {
         AccountEntity entity = new AccountEntity();
         entity.id = domain.getId();
-        entity.email = domain.getEmail().value();
-        entity.passwordHash = domain.getPasswordHash().value();
+        entity.email = domain.getEmailValue();
+        entity.passwordHash = domain.getPasswordHashValue();
+        entity.isGuest = domain.isGuest();
         entity.isSystemAdmin = domain.isSystemAdmin();
         entity.emailVerified = domain.isEmailVerified();
         entity.emailVerificationToken = domain.getEmailVerificationToken();

@@ -1,5 +1,6 @@
 package dev.ordago.auth.infrastructure.persistence;
 
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,5 +36,9 @@ public class AccountPanacheRepository implements PanacheRepositoryBase<AccountEn
             return Optional.empty();
         }
         return find("passwordResetToken", token.trim()).firstResultOptional();
+    }
+
+    public long deleteGuestsOlderThan(Instant cutoff) {
+        return delete("isGuest = true and createdAt < ?1", cutoff);
     }
 }

@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -41,20 +42,35 @@ public class SmallRyeJwtTokenProvider implements TokenProviderPort {
     public String createAccessToken(Account account, UserSession session, String playerTag) {
         Instant now = Instant.now();
         Instant expiresAt = now.plusSeconds(accessTokenLifespanSeconds);
-        Set<String> roles = account.isSystemAdmin() ? Set.of("USER", "ADMIN") : Set.of("USER");
 
         JwtClaimsBuilder builder = Jwt.issuer(issuer)
                 .subject(account.getId().toString())
-                .upn(account.getEmail().value())
-                .groups(roles)
                 .claim("sessionId", session.getId().toString())
                 .claim("deviceId", session.getDeviceId())
-                .claim("email", account.getEmail().value())
-                .claim("isAdmin", account.isSystemAdmin())
-                .claim("emailVerified", account.isEmailVerified())
                 .claim("jti", UUID.randomUUID().toString())
                 .issuedAt(now)
                 .expiresAt(expiresAt);
+
+        if (account.isGuest()) {
+            Set<String> guestRoles = Set.of("GUEST");
+            builder.upn("guest-" + account.getId())
+                    .groups(guestRoles)
+                    .claim("isGuest", true)
+                    .claim("emailVerified", false)
+                    .claim("roles", List.of("GUEST"))
+                    .claim("isAdmin", false);
+        } else {
+            Set<String> roles = account.isSystemAdmin() ? Set.of("USER", "ADMIN") : Set.of("USER");
+            builder.upn(account.getEmailValue() != null ? account.getEmailValue() : account.getId().toString())
+                    .groups(roles)
+                    .claim("isGuest", false)
+                    .claim("roles", roles)
+                    .claim("isAdmin", account.isSystemAdmin())
+                    .claim("emailVerified", account.isEmailVerified());
+            if (account.getEmailValue() != null) {
+                builder.claim("email", account.getEmailValue());
+            }
+        }
 
         if (playerTag != null && !playerTag.isBlank()) {
             builder.claim("playerTag", playerTag);
