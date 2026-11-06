@@ -159,7 +159,7 @@ public class AuthService implements
         PasswordHash passwordHash = PasswordHash.of(passwordEncoder.encode(command.password()));
         UUID accountId = UUID.randomUUID();
         Account account = Account.createNew(accountId, email, passwordHash);
-        account.generateEmailVerificationToken(verificationTokenDuration);
+        String verificationToken = account.generateEmailVerificationToken(verificationTokenDuration);
         accountRepository.save(account);
 
         String tagLine = command.tagLine();
@@ -189,7 +189,7 @@ public class AuthService implements
         sendEmailUseCase.sendEmail(
                 SendEmailCommand.emailVerification(
                         account.getEmailValue(),
-                        account.getEmailVerificationToken(),
+                        verificationToken,
                         language
                 )
         );
@@ -263,7 +263,7 @@ public class AuthService implements
         }
 
         PasswordHash passwordHash = PasswordHash.of(passwordEncoder.encode(command.password()));
-        account.claimAsRegular(email, passwordHash, verificationTokenDuration);
+        String verificationToken = account.claimAsRegular(email, passwordHash, verificationTokenDuration);
         accountRepository.save(account);
 
         userSessionRepository.revokeAllForAccount(account.getId(), "Account claimed as regular", Instant.now());
@@ -274,7 +274,7 @@ public class AuthService implements
         sendEmailUseCase.sendEmail(
                 SendEmailCommand.emailVerification(
                         account.getEmailValue(),
-                        account.getEmailVerificationToken(),
+                        verificationToken,
                         language
                 )
         );
@@ -541,7 +541,8 @@ public class AuthService implements
         if (token == null || token.isBlank()) {
             throw new InvalidVerificationTokenException();
         }
-        Account account = accountRepository.findByEmailVerificationToken(token)
+        String tokenHash = tokenProvider.hashToken(token.trim());
+        Account account = accountRepository.findByEmailVerificationTokenHash(tokenHash)
                 .orElseThrow(InvalidVerificationTokenException::new);
         account.verifyEmail(token);
         accountRepository.save(account);
@@ -567,14 +568,14 @@ public class AuthService implements
         if (account.isDeleted() || account.isEmailVerified()) {
             return;
         }
-        account.generateEmailVerificationToken(verificationTokenDuration);
+        String verificationToken = account.generateEmailVerificationToken(verificationTokenDuration);
         accountRepository.save(account);
 
         String resolvedLanguage = (language != null && !language.isBlank()) ? language : "es";
         sendEmailUseCase.sendEmail(
                 SendEmailCommand.emailVerification(
                         account.getEmailValue(),
-                        account.getEmailVerificationToken(),
+                        verificationToken,
                         resolvedLanguage
                 )
         );
@@ -600,14 +601,14 @@ public class AuthService implements
         if (account.isDeleted() || account.isBanned()) {
             return;
         }
-        account.generatePasswordResetToken(passwordResetTokenDuration);
+        String resetToken = account.generatePasswordResetToken(passwordResetTokenDuration);
         accountRepository.save(account);
 
         String resolvedLanguage = (language != null && !language.isBlank()) ? language : "es";
         sendEmailUseCase.sendEmail(
                 SendEmailCommand.passwordReset(
                         account.getEmailValue(),
-                        account.getPasswordResetToken(),
+                        resetToken,
                         resolvedLanguage
                 )
         );
@@ -619,7 +620,8 @@ public class AuthService implements
         if (token == null || token.isBlank()) {
             throw new InvalidPasswordResetTokenException();
         }
-        Account account = accountRepository.findByPasswordResetToken(token)
+        String tokenHash = tokenProvider.hashToken(token.trim());
+        Account account = accountRepository.findByPasswordResetTokenHash(tokenHash)
                 .orElseThrow(InvalidPasswordResetTokenException::new);
 
         PasswordHash newPasswordHash = PasswordHash.of(passwordEncoder.encode(newPassword));

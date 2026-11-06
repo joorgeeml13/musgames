@@ -24,18 +24,18 @@ public class AccountPanacheRepository implements PanacheRepositoryBase<AccountEn
         return count("email", email.trim().toLowerCase(Locale.ROOT)) > 0;
     }
 
-    public Optional<AccountEntity> findByEmailVerificationToken(String token) {
-        if (token == null || token.isBlank()) {
+    public Optional<AccountEntity> findByEmailVerificationTokenHash(String tokenHash) {
+        if (tokenHash == null || tokenHash.isBlank()) {
             return Optional.empty();
         }
-        return find("emailVerificationToken", token.trim()).firstResultOptional();
+        return find("emailVerificationTokenHash", tokenHash.trim()).firstResultOptional();
     }
 
-    public Optional<AccountEntity> findByPasswordResetToken(String token) {
-        if (token == null || token.isBlank()) {
+    public Optional<AccountEntity> findByPasswordResetTokenHash(String tokenHash) {
+        if (tokenHash == null || tokenHash.isBlank()) {
             return Optional.empty();
         }
-        return find("passwordResetToken", token.trim()).firstResultOptional();
+        return find("passwordResetTokenHash", tokenHash.trim()).firstResultOptional();
     }
 
     public long deleteGuestsOlderThan(Instant cutoff) {

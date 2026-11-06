@@ -1,5 +1,7 @@
 package dev.ordago.auth.infrastructure.api;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
@@ -12,10 +14,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.response.Response;
 import io.smallrye.jwt.auth.principal.DefaultJWTParser;
+import dev.ordago.auth.domain.port.out.TokenProviderPort;
 import dev.ordago.auth.infrastructure.persistence.AccountEntity;
 import dev.ordago.auth.infrastructure.persistence.AccountPanacheRepository;
 
@@ -30,6 +34,9 @@ class AuthResourceIT {
 
     @Inject
     AccountPanacheRepository accountPanacheRepository;
+
+    @Inject
+    TokenProviderPort tokenProvider;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final DefaultJWTParser jwtParser = new DefaultJWTParser();
@@ -388,9 +395,13 @@ class AuthResourceIT {
     @Test
     @Order(15)
     void shouldVerifyEmailSuccessfully() {
-        AccountEntity account = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
-        String token = account.emailVerificationToken;
-        assertThat(token).isNotBlank();
+        String token = "it-verify-token-12345";
+        QuarkusTransaction.requiringNew().run(() -> {
+            AccountEntity account = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
+            assertThat(account.emailVerificationTokenHash).isNotBlank();
+            account.emailVerificationTokenHash = tokenProvider.hashToken(token);
+            account.emailVerificationExpiresAt = Instant.now().plus(Duration.ofHours(24));
+        });
 
         given()
                 .contentType(ContentType.JSON)
@@ -403,7 +414,7 @@ class AuthResourceIT {
         accountPanacheRepository.getEntityManager().clear();
         AccountEntity updated = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
         assertThat(updated.emailVerified).isTrue();
-        assertThat(updated.emailVerificationToken).isNull();
+        assertThat(updated.emailVerificationTokenHash).isNull();
     }
 
     @Test
@@ -449,7 +460,7 @@ class AuthResourceIT {
                 .statusCode(204);
 
         AccountEntity account = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
-        assertThat(account.passwordResetToken).isNotBlank();
+        assertThat(account.passwordResetTokenHash).isNotBlank();
         assertThat(account.passwordResetExpiresAt).isNotNull();
     }
 
@@ -471,8 +482,13 @@ class AuthResourceIT {
     @Test
     @Order(19)
     void shouldResetPasswordSuccessfully() {
-        AccountEntity account = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
-        String resetToken = account.passwordResetToken;
+        String resetToken = "it-reset-token-12345";
+        QuarkusTransaction.requiringNew().run(() -> {
+            AccountEntity account = accountPanacheRepository.findByEmail("it_player@ordago.dev").orElseThrow();
+            assertThat(account.passwordResetTokenHash).isNotBlank();
+            account.passwordResetTokenHash = tokenProvider.hashToken(resetToken);
+            account.passwordResetExpiresAt = Instant.now().plus(Duration.ofHours(1));
+        });
 
         given()
                 .contentType(ContentType.JSON)

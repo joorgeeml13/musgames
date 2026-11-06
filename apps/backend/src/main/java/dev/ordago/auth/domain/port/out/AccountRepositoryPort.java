@@ -15,9 +15,9 @@ public interface AccountRepositoryPort {
 
     boolean existsByEmail(String email);
 
-    Optional<Account> findByEmailVerificationToken(String token);
+    Optional<Account> findByEmailVerificationTokenHash(String tokenHash);
 
-    Optional<Account> findByPasswordResetToken(String token);
+    Optional<Account> findByPasswordResetTokenHash(String tokenHash);
 
     default long deleteGuestsOlderThan(Instant cutoff) {
         return 0;

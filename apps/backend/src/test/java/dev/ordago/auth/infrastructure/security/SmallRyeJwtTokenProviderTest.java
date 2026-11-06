@@ -29,7 +29,7 @@ class SmallRyeJwtTokenProviderTest {
     void shouldCreateAccessTokenWithPlayerTagAndEmailVerifiedTrue() throws Exception {
         UUID accountId = UUID.randomUUID();
         Account account = Account.createNew(accountId, "itmusmaster@ordago.dev", "hashedPassword");
-        account.verifyEmail(account.getEmailVerificationToken());
+        account.verifyEmail();
 
         UserSession session = UserSession.createNew(
                 UUID.randomUUID(),

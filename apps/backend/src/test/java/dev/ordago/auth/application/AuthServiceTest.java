@@ -1,9 +1,13 @@
 package dev.ordago.auth.application;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -431,9 +435,9 @@ class AuthServiceTest {
                 account.getPasswordHash(),
                 account.isSystemAdmin(),
                 account.isEmailVerified(),
-                account.getEmailVerificationToken(),
+                account.getEmailVerificationTokenHash(),
                 account.getEmailVerificationExpiresAt(),
-                account.getPasswordResetToken(),
+                account.getPasswordResetTokenHash(),
                 account.getPasswordResetExpiresAt(),
                 account.getFailedLoginAttempts(),
                 Instant.now().minusSeconds(60),
@@ -483,9 +487,9 @@ class AuthServiceTest {
                 account.getPasswordHash(),
                 account.isSystemAdmin(),
                 account.isEmailVerified(),
-                account.getEmailVerificationToken(),
+                account.getEmailVerificationTokenHash(),
                 account.getEmailVerificationExpiresAt(),
-                account.getPasswordResetToken(),
+                account.getPasswordResetTokenHash(),
                 account.getPasswordResetExpiresAt(),
                 0,
                 null,
@@ -736,7 +740,8 @@ class AuthServiceTest {
         assertThat(emailCmd.recipient()).isEqualTo("verify_event@ordago.dev");
         assertThat(emailCmd.template()).isEqualTo("email-verification");
         assertThat(emailCmd.templateData()).containsKey("verificationUrl");
-        assertThat(emailCmd.templateData().get("verificationUrl")).isEqualTo(reg.account().getEmailVerificationToken());
+        assertThat(emailCmd.templateData().get("verificationUrl")).isNotBlank();
+        assertThat(reg.account().getEmailVerificationTokenHash()).isEqualTo(tokenProvider.hashToken(emailCmd.templateData().get("verificationUrl")));
         assertThat(emailCmd.language()).isEqualTo("es");
     }
 
@@ -752,14 +757,15 @@ class AuthServiceTest {
                 "127.0.0.1"
         ));
 
-        String token = reg.account().getEmailVerificationToken();
+        SendEmailCommand emailCmd = sendEmailUseCase.sentEmails.getLast();
+        String token = emailCmd.templateData().get("verificationUrl");
         assertThat(token).isNotBlank();
 
         authService.verifyEmail(token);
 
         Account account = accountRepository.findById(reg.account().getId()).orElseThrow();
         assertThat(account.isEmailVerified()).isTrue();
-        assertThat(account.getEmailVerificationToken()).isNull();
+        assertThat(account.getEmailVerificationTokenHash()).isNull();
         assertThat(account.getEmailVerificationExpiresAt()).isNull();
     }
 
@@ -776,13 +782,14 @@ class AuthServiceTest {
     @Test
     void shouldRejectVerifyEmailWithExpiredToken() {
         UUID accountId = UUID.randomUUID();
+        String expiredToken = "expired-token-123";
         Account account = new Account(
                 accountId,
                 Email.of("expired_verify_svc@ordago.dev"),
                 PasswordHash.of("hash"),
                 false,
                 false,
-                "expired-token-123",
+                tokenProvider.hashToken(expiredToken),
                 Instant.now().minusSeconds(100),
                 null,
                 null,
@@ -801,7 +808,7 @@ class AuthServiceTest {
         );
         accountRepository.save(account);
 
-        assertThatThrownBy(() -> authService.verifyEmail("expired-token-123"))
+        assertThatThrownBy(() -> authService.verifyEmail(expiredToken))
                 .isInstanceOf(VerificationTokenExpiredException.class);
     }
 
@@ -839,7 +846,8 @@ class AuthServiceTest {
                 "127.0.0.1"
         ));
 
-        authService.verifyEmail(reg.account().getEmailVerificationToken());
+        SendEmailCommand emailCmd = sendEmailUseCase.sentEmails.getFirst();
+        authService.verifyEmail(emailCmd.templateData().get("verificationUrl"));
         sendEmailUseCase.sentEmails.clear();
 
         authService.resendVerificationEmail("already_verified@ordago.dev", "es");
@@ -879,7 +887,8 @@ class AuthServiceTest {
         assertThat(emailCmd.templateData()).containsKey("resetUrl");
 
         Account account = accountRepository.findByEmail("forgot_pw@ordago.dev").orElseThrow();
-        assertThat(account.getPasswordResetToken()).isNotBlank();
+        assertThat(account.getPasswordResetTokenHash()).isNotBlank();
+        assertThat(account.getPasswordResetTokenHash()).hasSize(64);
         assertThat(account.getPasswordResetExpiresAt()).isAfter(Instant.now());
     }
 
@@ -911,9 +920,9 @@ class AuthServiceTest {
                 account.getPasswordHash(),
                 account.isSystemAdmin(),
                 account.isEmailVerified(),
-                account.getEmailVerificationToken(),
+                account.getEmailVerificationTokenHash(),
                 account.getEmailVerificationExpiresAt(),
-                account.getPasswordResetToken(),
+                account.getPasswordResetTokenHash(),
                 account.getPasswordResetExpiresAt(),
                 0,
                 null,
@@ -950,7 +959,10 @@ class AuthServiceTest {
 
         authService.requestPasswordReset("reset_test@ordago.dev", "es");
         Account account = accountRepository.findById(reg.account().getId()).orElseThrow();
-        String resetToken = account.getPasswordResetToken();
+        SendEmailCommand emailCmd = sendEmailUseCase.sentEmails.getLast();
+        String resetToken = emailCmd.templateData().get("resetUrl");
+        assertThat(resetToken).isNotBlank();
+        assertThat(account.getPasswordResetTokenHash()).isEqualTo(tokenProvider.hashToken(resetToken));
 
         authService.resetPassword(resetToken, "NewSecurePassword456!");
 
@@ -992,6 +1004,7 @@ class AuthServiceTest {
     @Test
     void shouldRejectResetPasswordWithExpiredToken() {
         UUID accountId = UUID.randomUUID();
+        String expiredToken = "expired-reset-token-123";
         Account account = new Account(
                 accountId,
                 Email.of("expired_pw_reset@ordago.dev"),
@@ -1000,7 +1013,7 @@ class AuthServiceTest {
                 false,
                 null,
                 null,
-                "expired-reset-token-123",
+                tokenProvider.hashToken(expiredToken),
                 Instant.now().minusSeconds(100),
                 0,
                 null,
@@ -1017,7 +1030,7 @@ class AuthServiceTest {
         );
         accountRepository.save(account);
 
-        assertThatThrownBy(() -> authService.resetPassword("expired-reset-token-123", "NewPassword123!"))
+        assertThatThrownBy(() -> authService.resetPassword(expiredToken, "NewPassword123!"))
                 .isInstanceOf(PasswordResetTokenExpiredException.class);
     }
 
@@ -1283,9 +1296,9 @@ class AuthServiceTest {
                 account.getPasswordHash(),
                 account.isSystemAdmin(),
                 account.isEmailVerified(),
-                account.getEmailVerificationToken(),
+                account.getEmailVerificationTokenHash(),
                 account.getEmailVerificationExpiresAt(),
-                account.getPasswordResetToken(),
+                account.getPasswordResetTokenHash(),
                 account.getPasswordResetExpiresAt(),
                 0,
                 null,
@@ -1336,9 +1349,9 @@ class AuthServiceTest {
                 account.getPasswordHash(),
                 account.isSystemAdmin(),
                 account.isEmailVerified(),
-                account.getEmailVerificationToken(),
+                account.getEmailVerificationTokenHash(),
                 account.getEmailVerificationExpiresAt(),
-                account.getPasswordResetToken(),
+                account.getPasswordResetTokenHash(),
                 account.getPasswordResetExpiresAt(),
                 0,
                 null,
@@ -1695,16 +1708,16 @@ class AuthServiceTest {
         }
 
         @Override
-        public Optional<Account> findByEmailVerificationToken(String token) {
+        public Optional<Account> findByEmailVerificationTokenHash(String tokenHash) {
             return accounts.values().stream()
-                    .filter(a -> token != null && token.equals(a.getEmailVerificationToken()))
+                    .filter(a -> tokenHash != null && tokenHash.equals(a.getEmailVerificationTokenHash()))
                     .findFirst();
         }
 
         @Override
-        public Optional<Account> findByPasswordResetToken(String token) {
+        public Optional<Account> findByPasswordResetTokenHash(String tokenHash) {
             return accounts.values().stream()
-                    .filter(a -> token != null && token.equals(a.getPasswordResetToken()))
+                    .filter(a -> tokenHash != null && tokenHash.equals(a.getPasswordResetTokenHash()))
                     .findFirst();
         }
     }
@@ -1811,7 +1824,16 @@ class AuthServiceTest {
 
         @Override
         public String hashToken(String token) {
-            return "sha256-" + token;
+            if (token == null) {
+                throw new IllegalArgumentException("Token cannot be null");
+            }
+            try {
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                byte[] hashBytes = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+                return HexFormat.of().formatHex(hashBytes);
+            } catch (NoSuchAlgorithmException e) {
+                throw new IllegalStateException("SHA-256 algorithm not available", e);
+            }
         }
 
         @Override

@@ -1,5 +1,7 @@
 package dev.ordago.auth.infrastructure.api;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -9,6 +11,7 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.http.Cookie;
@@ -17,6 +20,7 @@ import io.smallrye.jwt.auth.principal.DefaultJWTParser;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import dev.ordago.auth.domain.port.out.TokenProviderPort;
 import dev.ordago.auth.infrastructure.persistence.AccountEntity;
 import dev.ordago.auth.infrastructure.persistence.AccountPanacheRepository;
 
@@ -35,6 +39,9 @@ class AuthCookieIT {
 
     @Inject
     AccountPanacheRepository accountPanacheRepository;
+
+    @Inject
+    TokenProviderPort tokenProvider;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final DefaultJWTParser jwtParser = new DefaultJWTParser();
@@ -739,10 +746,14 @@ class AuthCookieIT {
             assertEnrichedJwtClaims(regAccessToken, expectedPlayerTag, false);
             assertEnrichedJwtClaims(regAccessCookie.getValue(), expectedPlayerTag, false);
 
-            // 2. Fetch email verification token directly from repository
-            AccountEntity account = accountPanacheRepository.findByEmail(email).orElseThrow();
-            String verificationToken = account.emailVerificationToken;
-            assertThat(verificationToken).isNotBlank();
+            // 2. Setup known email verification token in repository
+            String verificationToken = "it-cookie-verify-token-12345";
+            QuarkusTransaction.requiringNew().run(() -> {
+                AccountEntity account = accountPanacheRepository.findByEmail(email).orElseThrow();
+                assertThat(account.emailVerificationTokenHash).isNotBlank();
+                account.emailVerificationTokenHash = tokenProvider.hashToken(verificationToken);
+                account.emailVerificationExpiresAt = Instant.now().plus(Duration.ofHours(24));
+            });
 
             // Act: 3. Verify email via REST endpoint
             given()
@@ -757,6 +768,7 @@ class AuthCookieIT {
             accountPanacheRepository.getEntityManager().clear();
             AccountEntity updatedAccount = accountPanacheRepository.findByEmail(email).orElseThrow();
             assertThat(updatedAccount.emailVerified).isTrue();
+            assertThat(updatedAccount.emailVerificationTokenHash).isNull();
 
             // Act & Assert: 4. Subsequent Login issues JWT with emailVerified=true in body & cookie
             Response loginResponse = login(

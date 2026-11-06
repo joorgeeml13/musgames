@@ -29,9 +29,9 @@ public class AccountRepositoryAdapter implements AccountRepositoryPort {
             entity.isGuest = account.isGuest();
             entity.isSystemAdmin = account.isSystemAdmin();
             entity.emailVerified = account.isEmailVerified();
-            entity.emailVerificationToken = account.getEmailVerificationToken();
+            entity.emailVerificationTokenHash = account.getEmailVerificationTokenHash();
             entity.emailVerificationExpiresAt = account.getEmailVerificationExpiresAt();
-            entity.passwordResetToken = account.getPasswordResetToken();
+            entity.passwordResetTokenHash = account.getPasswordResetTokenHash();
             entity.passwordResetExpiresAt = account.getPasswordResetExpiresAt();
             entity.failedLoginAttempts = account.getFailedLoginAttempts();
             entity.lockedUntil = account.getLockedUntil();
@@ -64,13 +64,13 @@ public class AccountRepositoryAdapter implements AccountRepositoryPort {
     }
 
     @Override
-    public Optional<Account> findByEmailVerificationToken(String token) {
-        return panacheRepository.findByEmailVerificationToken(token).map(AccountEntity::toDomain);
+    public Optional<Account> findByEmailVerificationTokenHash(String tokenHash) {
+        return panacheRepository.findByEmailVerificationTokenHash(tokenHash).map(AccountEntity::toDomain);
     }
 
     @Override
-    public Optional<Account> findByPasswordResetToken(String token) {
-        return panacheRepository.findByPasswordResetToken(token).map(AccountEntity::toDomain);
+    public Optional<Account> findByPasswordResetTokenHash(String tokenHash) {
+        return panacheRepository.findByPasswordResetTokenHash(tokenHash).map(AccountEntity::toDomain);
     }
 
     @Override

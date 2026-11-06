@@ -29,7 +29,8 @@ class AccountTest {
         assertThat(account.isBanned()).isFalse();
         assertThat(account.isDeleted()).isFalse();
         assertThat(account.getFailedLoginAttempts()).isEqualTo(0);
-        assertThat(account.getEmailVerificationToken()).isNotNull();
+        assertThat(account.getEmailVerificationTokenHash()).isNull();
+        assertThat(account.getEmailVerificationExpiresAt()).isNull();
     }
 
     @Test
@@ -165,13 +166,14 @@ class AccountTest {
     @Test
     void shouldVerifyEmail() {
         Account account = Account.createNew(UUID.randomUUID(), "verify@ordago.dev", "hash");
+        account.generateEmailVerificationToken(Duration.ofHours(24));
         assertThat(account.isEmailVerified()).isFalse();
-        assertThat(account.getEmailVerificationToken()).isNotNull();
+        assertThat(account.getEmailVerificationTokenHash()).isNotNull();
 
         account.verifyEmail();
 
         assertThat(account.isEmailVerified()).isTrue();
-        assertThat(account.getEmailVerificationToken()).isNull();
+        assertThat(account.getEmailVerificationTokenHash()).isNull();
         assertThat(account.getEmailVerificationExpiresAt()).isNull();
     }
 
@@ -207,22 +209,23 @@ class AccountTest {
     @Test
     void shouldGenerateEmailVerificationToken() {
         Account account = Account.createNew(UUID.randomUUID(), "token_gen@ordago.dev", "hash");
-        account.generateEmailVerificationToken(Duration.ofHours(12));
+        String plainToken = account.generateEmailVerificationToken(Duration.ofHours(12));
 
-        assertThat(account.getEmailVerificationToken()).isNotBlank();
+        assertThat(plainToken).isNotBlank();
+        assertThat(account.getEmailVerificationTokenHash()).isNotBlank();
+        assertThat(account.getEmailVerificationTokenHash()).hasSize(64);
         assertThat(account.getEmailVerificationExpiresAt()).isAfter(Instant.now());
     }
 
     @Test
     void shouldVerifyEmailWithValidToken() {
         Account account = Account.createNew(UUID.randomUUID(), "verify_token@ordago.dev", "hash");
-        account.generateEmailVerificationToken(Duration.ofHours(24));
-        String token = account.getEmailVerificationToken();
+        String token = account.generateEmailVerificationToken(Duration.ofHours(24));
 
         account.verifyEmail(token);
 
         assertThat(account.isEmailVerified()).isTrue();
-        assertThat(account.getEmailVerificationToken()).isNull();
+        assertThat(account.getEmailVerificationTokenHash()).isNull();
         assertThat(account.getEmailVerificationExpiresAt()).isNull();
     }
 
@@ -242,54 +245,34 @@ class AccountTest {
     @Test
     void shouldRejectVerifyEmailWithExpiredToken() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(
-                id,
-                Email.of("expired_verify@ordago.dev"),
-                PasswordHash.of("hash"),
-                false,
-                false,
-                "expired-token",
-                Instant.now().minusSeconds(120),
-                null,
-                null,
-                0,
-                null,
-                null,
-                null,
-                false,
-                null,
-                false,
-                null,
-                null,
-                Instant.now(),
-                Instant.now(),
-                null
-        );
+        Account account = Account.createNew(id, "expired_verify@ordago.dev", "hash");
+        String token = account.generateEmailVerificationToken(Duration.ofSeconds(-10));
 
-        assertThatThrownBy(() -> account.verifyEmail("expired-token"))
+        assertThatThrownBy(() -> account.verifyEmail(token))
                 .isInstanceOf(VerificationTokenExpiredException.class);
     }
 
     @Test
     void shouldGeneratePasswordResetToken() {
         Account account = Account.createNew(UUID.randomUUID(), "reset_gen@ordago.dev", "hash");
-        account.generatePasswordResetToken(Duration.ofMinutes(45));
+        String plainToken = account.generatePasswordResetToken(Duration.ofMinutes(45));
 
-        assertThat(account.getPasswordResetToken()).isNotBlank();
+        assertThat(plainToken).isNotBlank();
+        assertThat(account.getPasswordResetTokenHash()).isNotBlank();
+        assertThat(account.getPasswordResetTokenHash()).hasSize(64);
         assertThat(account.getPasswordResetExpiresAt()).isAfter(Instant.now());
     }
 
     @Test
     void shouldResetPasswordWithValidToken() {
         Account account = Account.createNew(UUID.randomUUID(), "reset_ok@ordago.dev", "old-hash");
-        account.generatePasswordResetToken(Duration.ofMinutes(60));
-        String token = account.getPasswordResetToken();
+        String token = account.generatePasswordResetToken(Duration.ofMinutes(60));
 
         PasswordHash newHash = PasswordHash.of("new-hashed-password");
         account.resetPassword(token, newHash);
 
         assertThat(account.getPasswordHash().value()).isEqualTo("new-hashed-password");
-        assertThat(account.getPasswordResetToken()).isNull();
+        assertThat(account.getPasswordResetTokenHash()).isNull();
         assertThat(account.getPasswordResetExpiresAt()).isNull();
     }
 
@@ -310,32 +293,11 @@ class AccountTest {
     @Test
     void shouldRejectResetPasswordWithExpiredToken() {
         UUID id = UUID.randomUUID();
-        Account account = new Account(
-                id,
-                Email.of("expired_reset@ordago.dev"),
-                PasswordHash.of("hash"),
-                false,
-                false,
-                null,
-                null,
-                "expired-reset-token",
-                Instant.now().minusSeconds(30),
-                0,
-                null,
-                null,
-                null,
-                false,
-                null,
-                false,
-                null,
-                null,
-                Instant.now(),
-                Instant.now(),
-                null
-        );
+        Account account = Account.createNew(id, "expired_reset@ordago.dev", "hash");
+        String token = account.generatePasswordResetToken(Duration.ofSeconds(-10));
 
         PasswordHash newHash = PasswordHash.of("new-hashed-password");
-        assertThatThrownBy(() -> account.resetPassword("expired-reset-token", newHash))
+        assertThatThrownBy(() -> account.resetPassword(token, newHash))
                 .isInstanceOf(PasswordResetTokenExpiredException.class);
     }
 
@@ -373,7 +335,7 @@ class AccountTest {
         assertThat(guestAccount.isBanned()).isFalse();
         assertThat(guestAccount.isDeleted()).isFalse();
         assertThat(guestAccount.getFailedLoginAttempts()).isEqualTo(0);
-        assertThat(guestAccount.getEmailVerificationToken()).isNull();
+        assertThat(guestAccount.getEmailVerificationTokenHash()).isNull();
         assertThat(guestAccount.getEmailVerificationExpiresAt()).isNull();
         assertThat(guestAccount.getCreatedAt()).isEqualTo(fixedInstant);
         assertThat(guestAccount.getUpdatedAt()).isEqualTo(fixedInstant);
@@ -406,7 +368,7 @@ class AccountTest {
         Duration tokenValidity = Duration.ofHours(24);
 
         // Act
-        guestAccount.claimAsRegular(regularEmail, regularPasswordHash, tokenValidity);
+        String plainToken = guestAccount.claimAsRegular(regularEmail, regularPasswordHash, tokenValidity);
 
         // Assert
         assertThat(guestAccount.isGuest())
@@ -417,8 +379,9 @@ class AccountTest {
         assertThat(guestAccount.getPasswordHash().value()).isEqualTo("argon2_claimed_hash");
         assertThat(guestAccount.getPasswordHashValue()).isEqualTo("argon2_claimed_hash");
         assertThat(guestAccount.isEmailVerified()).isFalse();
-        assertThat(guestAccount.getEmailVerificationToken())
-                .as("Verification token must be generated upon claiming regular account")
+        assertThat(plainToken).isNotBlank();
+        assertThat(guestAccount.getEmailVerificationTokenHash())
+                .as("Verification token hash must be generated upon claiming regular account")
                 .isNotBlank();
         assertThat(guestAccount.getEmailVerificationExpiresAt())
                 .as("Verification token expiry must be set in the future")
@@ -432,13 +395,14 @@ class AccountTest {
         Account guestAccount = Account.createGuest(id);
 
         // Act
-        guestAccount.claimAsRegular("string_claim@ordago.dev", "string_hash", Duration.ofHours(12));
+        String plainToken = guestAccount.claimAsRegular("string_claim@ordago.dev", "string_hash", Duration.ofHours(12));
 
         // Assert
         assertThat(guestAccount.isGuest()).isFalse();
         assertThat(guestAccount.getEmailValue()).isEqualTo("string_claim@ordago.dev");
         assertThat(guestAccount.getPasswordHashValue()).isEqualTo("string_hash");
-        assertThat(guestAccount.getEmailVerificationToken()).isNotBlank();
+        assertThat(plainToken).isNotBlank();
+        assertThat(guestAccount.getEmailVerificationTokenHash()).isNotBlank();
         assertThat(guestAccount.getEmailVerificationExpiresAt()).isAfter(Instant.now());
     }
 
@@ -501,7 +465,7 @@ class AccountTest {
         assertThat(socialAccount.getPasswordHash()).isNull();
         assertThat(socialAccount.isGuest()).isFalse();
         assertThat(socialAccount.isEmailVerified()).isTrue();
-        assertThat(socialAccount.getEmailVerificationToken()).isNull();
+        assertThat(socialAccount.getEmailVerificationTokenHash()).isNull();
     }
 
     @Test
@@ -515,7 +479,7 @@ class AccountTest {
         assertThat(guestAccount.getEmailValue()).isEqualTo("claimed_social@ordago.dev");
         assertThat(guestAccount.getPasswordHash()).isNull();
         assertThat(guestAccount.isEmailVerified()).isTrue();
-        assertThat(guestAccount.getEmailVerificationToken()).isNull();
+        assertThat(guestAccount.getEmailVerificationTokenHash()).isNull();
     }
 
     @Test

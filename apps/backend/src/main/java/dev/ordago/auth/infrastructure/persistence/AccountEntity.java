@@ -17,7 +17,9 @@ import dev.ordago.auth.domain.model.PasswordHash;
 @Table(
         name = "accounts",
         indexes = {
-                @Index(name = "idx_accounts_email", columnList = "email", unique = true)
+                @Index(name = "idx_accounts_email", columnList = "email", unique = true),
+                @Index(name = "idx_accounts_email_verification_token_hash", columnList = "email_verification_token_hash"),
+                @Index(name = "idx_accounts_password_reset_token_hash", columnList = "password_reset_token_hash")
         }
 )
 public class AccountEntity extends PanacheEntityBase {
@@ -45,14 +47,14 @@ public class AccountEntity extends PanacheEntityBase {
     @Column(name = "email_verified", nullable = false)
     public boolean emailVerified = false;
 
-    @Column(name = "email_verification_token", length = 255)
-    public String emailVerificationToken;
+    @Column(name = "email_verification_token_hash", length = 255)
+    public String emailVerificationTokenHash;
 
     @Column(name = "email_verification_expires_at")
     public Instant emailVerificationExpiresAt;
 
-    @Column(name = "password_reset_token", length = 255)
-    public String passwordResetToken;
+    @Column(name = "password_reset_token_hash", length = 255)
+    public String passwordResetTokenHash;
 
     @Column(name = "password_reset_expires_at")
     public Instant passwordResetExpiresAt;
@@ -101,9 +103,9 @@ public class AccountEntity extends PanacheEntityBase {
                 this.isGuest,
                 this.isSystemAdmin,
                 this.emailVerified,
-                this.emailVerificationToken,
+                this.emailVerificationTokenHash,
                 this.emailVerificationExpiresAt,
-                this.passwordResetToken,
+                this.passwordResetTokenHash,
                 this.passwordResetExpiresAt,
                 this.failedLoginAttempts,
                 this.lockedUntil,
@@ -128,9 +130,9 @@ public class AccountEntity extends PanacheEntityBase {
         entity.isGuest = domain.isGuest();
         entity.isSystemAdmin = domain.isSystemAdmin();
         entity.emailVerified = domain.isEmailVerified();
-        entity.emailVerificationToken = domain.getEmailVerificationToken();
+        entity.emailVerificationTokenHash = domain.getEmailVerificationTokenHash();
         entity.emailVerificationExpiresAt = domain.getEmailVerificationExpiresAt();
-        entity.passwordResetToken = domain.getPasswordResetToken();
+        entity.passwordResetTokenHash = domain.getPasswordResetTokenHash();
         entity.passwordResetExpiresAt = domain.getPasswordResetExpiresAt();
         entity.failedLoginAttempts = domain.getFailedLoginAttempts();
         entity.lockedUntil = domain.getLockedUntil();

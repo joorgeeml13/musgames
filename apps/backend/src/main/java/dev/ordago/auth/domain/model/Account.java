@@ -1,7 +1,11 @@
 package dev.ordago.auth.domain.model;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
 import dev.ordago.auth.domain.exception.AccountNotGuestException;
@@ -18,9 +22,9 @@ public class Account {
     private boolean isGuest;
     private boolean isSystemAdmin;
     private boolean emailVerified;
-    private String emailVerificationToken;
+    private String emailVerificationTokenHash;
     private Instant emailVerificationExpiresAt;
-    private String passwordResetToken;
+    private String passwordResetTokenHash;
     private Instant passwordResetExpiresAt;
     private int failedLoginAttempts;
     private Instant lockedUntil;
@@ -42,9 +46,9 @@ public class Account {
             boolean isGuest,
             boolean isSystemAdmin,
             boolean emailVerified,
-            String emailVerificationToken,
+            String emailVerificationTokenHash,
             Instant emailVerificationExpiresAt,
-            String passwordResetToken,
+            String passwordResetTokenHash,
             Instant passwordResetExpiresAt,
             int failedLoginAttempts,
             Instant lockedUntil,
@@ -69,9 +73,9 @@ public class Account {
         this.passwordHash = passwordHash;
         this.isSystemAdmin = isSystemAdmin;
         this.emailVerified = emailVerified;
-        this.emailVerificationToken = emailVerificationToken;
+        this.emailVerificationTokenHash = emailVerificationTokenHash;
         this.emailVerificationExpiresAt = emailVerificationExpiresAt;
-        this.passwordResetToken = passwordResetToken;
+        this.passwordResetTokenHash = passwordResetTokenHash;
         this.passwordResetExpiresAt = passwordResetExpiresAt;
         this.failedLoginAttempts = failedLoginAttempts;
         this.lockedUntil = lockedUntil;
@@ -93,9 +97,9 @@ public class Account {
             PasswordHash passwordHash,
             boolean isSystemAdmin,
             boolean emailVerified,
-            String emailVerificationToken,
+            String emailVerificationTokenHash,
             Instant emailVerificationExpiresAt,
-            String passwordResetToken,
+            String passwordResetTokenHash,
             Instant passwordResetExpiresAt,
             int failedLoginAttempts,
             Instant lockedUntil,
@@ -117,9 +121,9 @@ public class Account {
                 false,
                 isSystemAdmin,
                 emailVerified,
-                emailVerificationToken,
+                emailVerificationTokenHash,
                 emailVerificationExpiresAt,
-                passwordResetToken,
+                passwordResetTokenHash,
                 passwordResetExpiresAt,
                 failedLoginAttempts,
                 lockedUntil,
@@ -143,9 +147,9 @@ public class Account {
             boolean isGuest,
             boolean isSystemAdmin,
             boolean emailVerified,
-            String emailVerificationToken,
+            String emailVerificationTokenHash,
             Instant emailVerificationExpiresAt,
-            String passwordResetToken,
+            String passwordResetTokenHash,
             Instant passwordResetExpiresAt,
             int failedLoginAttempts,
             Instant lockedUntil,
@@ -167,9 +171,9 @@ public class Account {
                 isGuest,
                 isSystemAdmin,
                 emailVerified,
-                emailVerificationToken,
+                emailVerificationTokenHash,
                 emailVerificationExpiresAt,
-                passwordResetToken,
+                passwordResetTokenHash,
                 passwordResetExpiresAt,
                 failedLoginAttempts,
                 lockedUntil,
@@ -192,9 +196,9 @@ public class Account {
             String passwordHash,
             boolean isSystemAdmin,
             boolean emailVerified,
-            String emailVerificationToken,
+            String emailVerificationTokenHash,
             Instant emailVerificationExpiresAt,
-            String passwordResetToken,
+            String passwordResetTokenHash,
             Instant passwordResetExpiresAt,
             int failedLoginAttempts,
             Instant lockedUntil,
@@ -216,9 +220,9 @@ public class Account {
                 false,
                 isSystemAdmin,
                 emailVerified,
-                emailVerificationToken,
+                emailVerificationTokenHash,
                 emailVerificationExpiresAt,
-                passwordResetToken,
+                passwordResetTokenHash,
                 passwordResetExpiresAt,
                 failedLoginAttempts,
                 lockedUntil,
@@ -247,8 +251,8 @@ public class Account {
                 false,
                 false,
                 false,
-                UUID.randomUUID().toString(),
-                now.plus(Duration.ofHours(24)),
+                null,
+                null,
                 null,
                 null,
                 0,
@@ -336,19 +340,20 @@ public class Account {
         return createSocial(id, Email.of(email), Instant.now());
     }
 
-    public void claimAsRegular(Email newEmail, PasswordHash newPasswordHash, Duration verificationTokenDuration) {
+    public String claimAsRegular(Email newEmail, PasswordHash newPasswordHash, Duration verificationTokenDuration) {
         if (!this.isGuest) {
             throw new AccountNotGuestException();
         }
         this.email = Objects.requireNonNull(newEmail, "newEmail cannot be null");
         this.passwordHash = Objects.requireNonNull(newPasswordHash, "newPasswordHash cannot be null");
         this.isGuest = false;
-        generateEmailVerificationToken(verificationTokenDuration);
+        String plainToken = generateEmailVerificationToken(verificationTokenDuration);
         this.updatedAt = Instant.now();
+        return plainToken;
     }
 
-    public void claimAsRegular(String newEmail, String newPasswordHash, Duration verificationTokenDuration) {
-        claimAsRegular(Email.of(newEmail), PasswordHash.of(newPasswordHash), verificationTokenDuration);
+    public String claimAsRegular(String newEmail, String newPasswordHash, Duration verificationTokenDuration) {
+        return claimAsRegular(Email.of(newEmail), PasswordHash.of(newPasswordHash), verificationTokenDuration);
     }
 
     public void claimAsSocial(Email email) {
@@ -359,7 +364,7 @@ public class Account {
         this.passwordHash = null;
         this.isGuest = false;
         this.emailVerified = true;
-        this.emailVerificationToken = null;
+        this.emailVerificationTokenHash = null;
         this.emailVerificationExpiresAt = null;
         this.updatedAt = Instant.now();
     }
@@ -411,16 +416,31 @@ public class Account {
         this.updatedAt = this.deletedAt;
     }
 
-    public void generateEmailVerificationToken(Duration validity) {
+    private static String hashToken(String token) {
+        if (token == null) {
+            throw new IllegalArgumentException("Token cannot be null");
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hashBytes = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hashBytes);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 algorithm not available", e);
+        }
+    }
+
+    public String generateEmailVerificationToken(Duration validity) {
         Objects.requireNonNull(validity, "validity cannot be null");
-        this.emailVerificationToken = UUID.randomUUID().toString();
+        String plainToken = UUID.randomUUID().toString();
+        this.emailVerificationTokenHash = hashToken(plainToken);
         this.emailVerificationExpiresAt = Instant.now().plus(validity);
         this.updatedAt = Instant.now();
+        return plainToken;
     }
 
     public void verifyEmail() {
         this.emailVerified = true;
-        this.emailVerificationToken = null;
+        this.emailVerificationTokenHash = null;
         this.emailVerificationExpiresAt = null;
         this.updatedAt = Instant.now();
     }
@@ -429,38 +449,52 @@ public class Account {
         verifyEmail();
     }
 
-    public void verifyEmail(String token) {
-        if (token == null || token.isBlank() || this.emailVerificationToken == null || !this.emailVerificationToken.equals(token)) {
+    public void verifyEmail(String plainToken) {
+        if (plainToken == null || plainToken.isBlank() || this.emailVerificationTokenHash == null) {
+            throw new InvalidVerificationTokenException();
+        }
+        String hashedToken = hashToken(plainToken.trim());
+        if (!this.emailVerificationTokenHash.equals(hashedToken)) {
             throw new InvalidVerificationTokenException();
         }
         if (this.emailVerificationExpiresAt == null || !this.emailVerificationExpiresAt.isAfter(Instant.now())) {
             throw new VerificationTokenExpiredException();
         }
         this.emailVerified = true;
-        this.emailVerificationToken = null;
+        this.emailVerificationTokenHash = null;
         this.emailVerificationExpiresAt = null;
         this.updatedAt = Instant.now();
     }
 
-    public void generatePasswordResetToken(Duration validity) {
+    public String generatePasswordResetToken(Duration validity) {
         Objects.requireNonNull(validity, "validity cannot be null");
-        this.passwordResetToken = UUID.randomUUID().toString();
+        String plainToken = UUID.randomUUID().toString();
+        this.passwordResetTokenHash = hashToken(plainToken);
         this.passwordResetExpiresAt = Instant.now().plus(validity);
         this.updatedAt = Instant.now();
+        return plainToken;
     }
 
-    public void resetPassword(String token, PasswordHash newPasswordHash) {
+    public void resetPassword(String plainToken, PasswordHash newPasswordHash) {
         Objects.requireNonNull(newPasswordHash, "newPasswordHash cannot be null");
-        if (token == null || token.isBlank() || this.passwordResetToken == null || !this.passwordResetToken.equals(token)) {
+        if (plainToken == null || plainToken.isBlank() || this.passwordResetTokenHash == null) {
+            throw new InvalidPasswordResetTokenException();
+        }
+        String hashedToken = hashToken(plainToken.trim());
+        if (!this.passwordResetTokenHash.equals(hashedToken)) {
             throw new InvalidPasswordResetTokenException();
         }
         if (this.passwordResetExpiresAt == null || !this.passwordResetExpiresAt.isAfter(Instant.now())) {
             throw new PasswordResetTokenExpiredException();
         }
         this.passwordHash = newPasswordHash;
-        this.passwordResetToken = null;
+        this.passwordResetTokenHash = null;
         this.passwordResetExpiresAt = null;
         this.updatedAt = Instant.now();
+    }
+
+    public void resetPassword(String plainToken, String newPasswordHash) {
+        resetPassword(plainToken, PasswordHash.of(newPasswordHash));
     }
 
     public void changePassword(PasswordHash newPasswordHash) {
@@ -513,16 +547,16 @@ public class Account {
         return emailVerified;
     }
 
-    public String getEmailVerificationToken() {
-        return emailVerificationToken;
+    public String getEmailVerificationTokenHash() {
+        return emailVerificationTokenHash;
     }
 
     public Instant getEmailVerificationExpiresAt() {
         return emailVerificationExpiresAt;
     }
 
-    public String getPasswordResetToken() {
-        return passwordResetToken;
+    public String getPasswordResetTokenHash() {
+        return passwordResetTokenHash;
     }
 
     public Instant getPasswordResetExpiresAt() {
