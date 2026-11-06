@@ -8,6 +8,7 @@ import org.eclipse.microprofile.openapi.annotations.media.Schema;
 public record ResetPasswordRequest(
         @Schema(description = "Password reset token sent via email", required = true)
         @NotBlank(message = "Token is required")
+        @Size(max = 255, message = "Token cannot exceed 255 characters")
         String token,
 
         @Schema(description = "New plain text password (8-128 chars)", example = "NewSecureP@ss123", required = true, minLength = 8, maxLength = 128)

@@ -593,6 +593,7 @@ public class AuthResource {
 
     @POST
     @Path("/verify-email")
+    @RateLimited(RateLimitTier.LOGIN)
     @Operation(summary = "Verify account email", description = "Validates the email verification token and marks the account email as verified")
     @APIResponses(value = {
             @APIResponse(responseCode = "204", description = "Email verified successfully"),
@@ -640,6 +641,7 @@ public class AuthResource {
 
     @POST
     @Path("/reset-password")
+    @RateLimited(RateLimitTier.PASSWORD_RESET)
     @Operation(summary = "Reset password with token", description = "Resets user password using the token received by email and revokes all active sessions")
     @APIResponses(value = {
             @APIResponse(responseCode = "204", description = "Password reset successfully"),

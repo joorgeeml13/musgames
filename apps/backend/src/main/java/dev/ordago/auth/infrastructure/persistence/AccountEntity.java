@@ -18,8 +18,8 @@ import dev.ordago.auth.domain.model.PasswordHash;
         name = "accounts",
         indexes = {
                 @Index(name = "idx_accounts_email", columnList = "email", unique = true),
-                @Index(name = "idx_accounts_email_verification_token_hash", columnList = "email_verification_token_hash"),
-                @Index(name = "idx_accounts_password_reset_token_hash", columnList = "password_reset_token_hash")
+                @Index(name = "idx_accounts_email_verification_token_hash", columnList = "email_verification_token_hash", unique = true),
+                @Index(name = "idx_accounts_password_reset_token_hash", columnList = "password_reset_token_hash", unique = true)
         }
 )
 public class AccountEntity extends PanacheEntityBase {

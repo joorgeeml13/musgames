@@ -454,7 +454,7 @@ public class Account {
             throw new InvalidVerificationTokenException();
         }
         String hashedToken = hashToken(plainToken.trim());
-        if (!this.emailVerificationTokenHash.equals(hashedToken)) {
+        if (!MessageDigest.isEqual(this.emailVerificationTokenHash.getBytes(StandardCharsets.UTF_8), hashedToken.getBytes(StandardCharsets.UTF_8))) {
             throw new InvalidVerificationTokenException();
         }
         if (this.emailVerificationExpiresAt == null || !this.emailVerificationExpiresAt.isAfter(Instant.now())) {
@@ -481,7 +481,7 @@ public class Account {
             throw new InvalidPasswordResetTokenException();
         }
         String hashedToken = hashToken(plainToken.trim());
-        if (!this.passwordResetTokenHash.equals(hashedToken)) {
+        if (!MessageDigest.isEqual(this.passwordResetTokenHash.getBytes(StandardCharsets.UTF_8), hashedToken.getBytes(StandardCharsets.UTF_8))) {
             throw new InvalidPasswordResetTokenException();
         }
         if (this.passwordResetExpiresAt == null || !this.passwordResetExpiresAt.isAfter(Instant.now())) {
@@ -490,6 +490,8 @@ public class Account {
         this.passwordHash = newPasswordHash;
         this.passwordResetTokenHash = null;
         this.passwordResetExpiresAt = null;
+        this.failedLoginAttempts = 0;
+        this.lockedUntil = null;
         this.updatedAt = Instant.now();
     }
 

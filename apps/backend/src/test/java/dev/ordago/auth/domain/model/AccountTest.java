@@ -266,6 +266,14 @@ class AccountTest {
     @Test
     void shouldResetPasswordWithValidToken() {
         Account account = Account.createNew(UUID.randomUUID(), "reset_ok@ordago.dev", "old-hash");
+        account.recordFailedLogin(5, Duration.ofMinutes(15));
+        account.recordFailedLogin(5, Duration.ofMinutes(15));
+        account.recordFailedLogin(5, Duration.ofMinutes(15));
+        account.recordFailedLogin(5, Duration.ofMinutes(15));
+        account.recordFailedLogin(5, Duration.ofMinutes(15));
+        assertThat(account.isLocked()).isTrue();
+        assertThat(account.getFailedLoginAttempts()).isEqualTo(5);
+
         String token = account.generatePasswordResetToken(Duration.ofMinutes(60));
 
         PasswordHash newHash = PasswordHash.of("new-hashed-password");
@@ -274,6 +282,9 @@ class AccountTest {
         assertThat(account.getPasswordHash().value()).isEqualTo("new-hashed-password");
         assertThat(account.getPasswordResetTokenHash()).isNull();
         assertThat(account.getPasswordResetExpiresAt()).isNull();
+        assertThat(account.getFailedLoginAttempts()).isEqualTo(0);
+        assertThat(account.getLockedUntil()).isNull();
+        assertThat(account.isLocked()).isFalse();
     }
 
     @Test
